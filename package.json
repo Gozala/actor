@@ -1,6 +1,6 @@
 { "name": "actors"
 , "version": "0.0.1"
-, "description": "{{description}}"
+, "description": "Actors for javascript."
 , "homepage": "http://github.com/Gozala/actors/"
 , "keywords": []
 , "contributors":
