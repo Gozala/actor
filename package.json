@@ -1,8 +1,8 @@
 { "name": "actors"
 , "version": "0.0.1"
-, "description": "Actors for javascript."
+, "description": "Experimental library implementing scala like actors in javascript."
 , "homepage": "http://github.com/Gozala/actors/"
-, "keywords": []
+, "keywords": ["actor", "generators", "async"]
 , "contributors":
   [ "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)" ]
 , "repository":
