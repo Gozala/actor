@@ -1,6 +1,6 @@
 { "name": "actors"
 , "version": "0.0.1"
-, "description": "{{description}}"
+, "description": "Actors for javascript."
 , "homepage": "http://github.com/Gozala/actors/"
 , "keywords": []
 , "contributors":
@@ -15,7 +15,6 @@
   , "lib": "./lib"
   , "test": "./test"
   }
-, "dependencies": { "test": ">=0.0.10" }
 , "main": "./lib/actors.js"
 , "scripts": { "test": "node test/all.js" }
 , "engines":
@@ -23,7 +22,11 @@
   , "teleport": ">=0.2.0"
   , "jetpack": "0.9.0"
   }
-, "dependencies": { "q": ">=0.1.0" }
+, "dependencies":
+  { "test": ">=0.0.10"
+  , "light-traits": ">=0.0.6"
+  , "q": ">=0.1.0"
+  }
 , "licenses" :
   [ { "type" : "MPL 1.1/LGPL 2.1/GPL 2.0"
     , "url" : "http://www.mozilla.org/MPL/"
