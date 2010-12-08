@@ -16,10 +16,8 @@
   , "test": "./test"
   }
 , "main": "./lib/actors.js"
-, "scripts": { "test": "node test/all.js" }
 , "engines":
-  { "node": ">=0.1.103"
-  , "teleport": ">=0.2.0"
+  { "teleport": ">=0.2.0"
   , "jetpack": "0.9.0"
   }
 , "dependencies":
