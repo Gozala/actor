@@ -1,5 +1,5 @@
 { "name": "actors"
-, "version": "0.0.1"
+, "version": "0.0.2"
 , "description": "Experimental library implementing scala like actors in javascript."
 , "homepage": "http://github.com/Gozala/actors/"
 , "keywords": ["actor", "generators", "async"]
