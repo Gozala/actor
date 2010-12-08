@@ -1,21 +1,21 @@
-{ "name": "actors"
+{ "name": "actor"
 , "version": "0.0.2"
 , "description": "Experimental library implementing scala like actors in javascript."
-, "homepage": "http://github.com/Gozala/actors/"
-, "keywords": ["actor", "generators", "async"]
+, "homepage": "http://github.com/Gozala/actor/"
+, "keywords": ["actor", "generators", "async", "javascript 1.7"]
 , "contributors":
   [ "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)" ]
 , "repository":
   { "type": "git"
-  , "url": "git://github.com/Gozala/actors.git"
+  , "url": "git://github.com/Gozala/actor.git"
   }
-, "bugs": { "web": "http://github.com/Gozala/actors/issues/" }
+, "bugs": { "web": "http://github.com/Gozala/actor/issues/" }
 , "directories":
   { "doc": "./docs"
   , "lib": "./lib"
   , "test": "./test"
   }
-, "main": "./lib/actors.js"
+, "main": "./lib/actor.js"
 , "engines":
   { "teleport": ">=0.2.0"
   , "jetpack": "0.9.0"

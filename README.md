@@ -1,4 +1,4 @@
-# actors #
+# actor #
 
 Experimental library implementing [Scala] like [Actors] in javascript. Library
 uses [generators] introduced in [JavaScript 1.7] to provide [continuation]
@@ -22,18 +22,18 @@ very likely that this library will work / won't be to hard to make it work on
 
 ## Examples ##
 
-- [continuation passing after delay](https://github.com/Gozala/actors/blob/master/lib/examples/sleep.js)
-- [continuation passing aftor async operation](https://github.com/Gozala/actors/blob/master/lib/examples/hello.js)
-- [message passing](https://github.com/Gozala/actors/blob/master/lib/examples/receive.js)
+- [continuation passing after delay](https://github.com/Gozala/actor/blob/master/lib/examples/sleep.js)
+- [continuation passing aftor async operation](https://github.com/Gozala/actor/blob/master/lib/examples/hello.js)
+- [message passing](https://github.com/Gozala/actor/blob/master/lib/examples/receive.js)
 
 ## Install ##
 
-    npm install actors
+    npm install actor
 
 ## Play ##
 
     teleport activate
-    open http://localhost:4747/packages/actors/
+    open http://localhost:4747/packages/actor/
 
 ## Prior Art / Source of inspiration ##
 
