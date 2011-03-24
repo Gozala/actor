@@ -43,6 +43,10 @@ very likely that this library will work / won't be to hard to make it work on
 - [defer: Taming asynchronous javascript with CoffeeScript](http://gfxmonk.net/2010/07/04/defer-taming-asynchronous-javascript-with-coffeescript.html)
 - [Single frame continuations proposal](https://mail.mozilla.org/pipermail/es-discuss/2010-March/010865.html)
 
+## Similar projects ##
+
+- [JSTask](https://github.com/dherman/jstask)
+
 [continuation]:http://en.wikipedia.org/wiki/Continuation
 [event-loop]:http://en.wikipedia.org/wiki/Event_loop
 [promise]:http://wiki.commonjs.org/wiki/Promises/B
