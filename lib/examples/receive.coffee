@@ -10,14 +10,14 @@ actor = exports.actor = new Actor ->
   lastnName = this.receive 'lastname'
 
   console.log '<<< Task will be suspended until messages arrive'
-  console.log '<<< Hello ' + (yield firstName).value + ' ' + (yield lastnName).value
+  console.log '<<< Hello ' + (yield firstName) + ' ' + (yield lastnName)
   console.log '<<< Task finished'
   return
 
 exports.example = (firstName = 'awesome', lastnName = 'actor') ->
   actor.start()
   setTimeout ->
-    actor.send type: 'firstname', value: firstName
-    actor.send type: 'lastname', value: lastnName
+    actor.send 'firstname', firstName
+    actor.send 'lastname', lastnName
   , 300
   console.log '>>> Will send a first name and last name in 300ms'

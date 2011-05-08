@@ -1,41 +1,4 @@
-### vim:set ts=2 sw=2 sts=2 et autoread
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Jetpack.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Irakli Gozalishvili <gozala@mozilla.com> (Original Author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK *****
-###
+### vim:set ts=2 sw=2 sts=2 et autoread ###
 
 'use strict'
 
@@ -85,20 +48,20 @@ exports.Actor = class Actor
   # Sends `message` to this actor (asynchronous) supplying explicit reply
   # destination.
   # Sends `message` to this actor asynchronously.
+  # @param {String} type
+  #   Type of message being send.
   # @param {Object} message
-  #   Object representing a message sent to the generator. Object may
-  #   have `type` string property that is used to categorize a messages.
-  #   Generator itself will be able to receive a message by calling `receive`
-  #   method with a `type` argument.
-  send: (message) ->
-    # If there is a ticket for a given message type in `inbox` resolving it
-    # with a given `message`. Otherwise putting message to `outbox`.
-    ticket = @_inbox[message.type]?.shift()
+  #   Message being send.
+  send: (type, message) ->
+    # If there is a ticket for a given `type` in `inbox` resolving it
+    # with a given `message`. Otherwise putting `message` to `outbox`'s
+    # mailbox for the given `type`.
+    ticket = @_inbox[type]?.shift()
     if ticket
       ticket.resolve message
     else
       # Adding a `message` to a mailbox for a given message `type`.
-      mailbox = @_outbox[message.type] ? @_outbox[message.type] = []
+      mailbox = @_outbox[type] ? @_outbox[type] = []
       mailbox.push message
     @ # Returning this instance for chain-ability.
 
