@@ -1,33 +1,36 @@
-{ "name": "actor"
-, "version": "0.0.2"
-, "description": "Experimental library implementing scala like actors in javascript."
-, "homepage": "http://github.com/Gozala/actor/"
-, "keywords": ["actor", "generators", "async", "javascript 1.7"]
-, "contributors":
-  [ "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)" ]
-, "repository":
-  { "type": "git"
-  , "url": "git://github.com/Gozala/actor.git"
-  }
-, "bugs": { "web": "http://github.com/Gozala/actor/issues/" }
-, "directories":
-  { "doc": "./docs"
-  , "lib": "./lib"
-  , "test": "./test"
-  }
-, "main": "./lib/actor.js"
-, "engines":
-  { "teleport": ">=0.2.0"
-  , "jetpack": "0.9.0"
-  }
-, "dependencies":
-  { "test": ">=0.0.10"
-  , "light-traits": ">=0.0.6"
-  , "q": ">=0.1.0"
-  }
-, "licenses" :
-  [ { "type" : "MPL 1.1/LGPL 2.1/GPL 2.0"
-    , "url" : "http://www.mozilla.org/MPL/"
-    }
-  ]
+{
+  "name": "actor",
+  "id": "actor",
+  "version": "0.0.2",
+  "description": "Experimental library implementing scala like actors in javascript.",
+  "homepage": "http://github.com/Gozala/actor/",
+  "keywords": ["actor", "generators", "async", "javascript 1.7"],
+  "contributors": ["Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)"],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/Gozala/actor.git"
+  },
+  "bugs": {
+    "web": "http://github.com/Gozala/actor/issues/"
+  },
+  "directories": {
+    "doc": "./docs",
+    "lib": "./lib",
+    "test": "./test"
+  },
+  "main": "./lib/actor.js",
+  "engines": {
+    "teleport": ">=0.2.0",
+    "jetpack": "0.9.0"
+  },
+  "devDependencies": {
+    "test": ">=0.0.10"
+  },
+  "dependencies": {
+    "q": ">=0.1.0"
+  },
+  "licenses": [{
+    "type": "MIT",
+    "url": "http://jeditoolkit.com/LICENSE"
+  }]
 }
