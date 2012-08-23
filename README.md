@@ -1,3 +1,4 @@
+[![build status](https://secure.travis-ci.org/Gozala/actor.png)](http://travis-ci.org/Gozala/actor)
 # actor #
 
 Experimental library implementing [Scala] like [Actors] in javascript. Library
