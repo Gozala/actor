@@ -1,9 +1,6 @@
-/* eslint-disable require-yield */
-/* eslint-disable no-nested-ternary */
-// eslint-disable-next-line no-unused-vars
-import * as API from "./task/api.js"
+import * as API from "./type.js"
 
-export * from "./task/api.js"
+export * from "./type.js"
 
 /**
  * @template {string} Tag
@@ -24,15 +21,7 @@ export const perform = function* (source) {
  * @returns {API.Task<void, never, never>}
  */
 export const suspend = function* () {
-  // yield { type: 'suspend' }
-  const actor = yield* context()
-  console.log("SUSPEND!!!")
-  actor.stack.idle.add(top(actor))
-  actor.stack.active.shift()
-
-  // top(actor).next(actor)
-  // yield * context()
-  // yield
+  yield { type: "suspend" }
 }
 
 /**
@@ -60,12 +49,10 @@ export function* self() {
 
 /**
  * @template T, M, X
- * @returns {API.Task<API.Actor<T, M, X>>}
+ * @returns {API.Task<API.Fork<T, M, X>}
  */
 export function* context() {
-  // return /** @type {API.Fork<T, M, X>} */(yield { type: 'context' })
-  const actor = yield null
-  return actor
+  return /** @type {API.Fork<T, M, X>} */ (yield { type: "context" })
 }
 
 /**
@@ -120,8 +107,7 @@ const isAsync = node =>
  * @returns {API.Effect<T>}
  */
 export const send = function* (message) {
-  yield message
-  // yield { type: 'send', message }
+  yield { type: "send", message }
 }
 
 /**
@@ -187,70 +173,6 @@ export const nofx = (function* () {})()
 //     yield * send(value)
 //   }
 // }
-
-export const join = function* () {
-  const actor = yield* context()
-  const task = top(actor)
-
-  console.log(task.fork)
-
-  yield* run(task.fork)
-
-  console.log("JOINED")
-}
-
-/**
- * @template T, M, X
- * @param {API.Task<T, M, X>} task
- * @returns {API.Task<void, M, never>}
- */
-export const spawn = function* (task) {
-  const actor = yield* context()
-  dispatch(top(actor), actor)
-  enqueue(task, actor)
-}
-
-/**
- * @template T, M, X
- * @param job
- * @param {API.Task<T, M, X>} task
- * @returns {API.Task<void, M, never>}
- */
-export const fork = function* (job) {
-  const actor = yield* context()
-  const task = top(actor)
-  // if (!task.fork) {
-  const fork = new Fork(task, actor, IDLE, new Stack([job]))
-  // enqueue(job, fork)
-  // dispatch(top(actor), actor)
-  // enqueue(run(fork), actor)
-  console.log("Status", actor)
-  actor.stack.active.push(Object.assign(run(fork), { runfork: true }))
-  // task.fork = fork
-  // } else {
-  // //   console.log('already had a fork')
-  //   enqueue(job, task.fork)
-  //   enqueue(run(fork), actor)
-  //   // dispatch(top(actor), actor)
-  // }
-
-  // yield * run(task.fork)
-
-  // yield * run(fork)
-}
-
-/**
- * @template T, M, X
- * @param {() => API.Task<T, M, X>} fn
- * @returns {API.Task<void, M, X>}
- */
-export const group = function* (fn) {
-  const actor = yield* context()
-  const task = fn()
-  const fork = new Fork(top(actor), actor, IDLE, new Stack([task]))
-
-  yield* run(fork)
-}
 
 /**
  * @template {string} Tag
@@ -363,7 +285,21 @@ class Main {
  */
 class Fork {
   /**
-   * @param {API.Actor<T, M, X>} supervisor
+   * @template M, X
+   * @param {API.Actor<void, M, X>} actor
+   */
+  static of(actor) {
+    const task = top(actor)
+    if (task.fork) {
+      return task.fork
+    } else {
+      const fork = new Fork(actor)
+      task.fork = fork
+      return fork
+    }
+  }
+  /**
+   * @param {API.Actor<void, M, X>} supervisor
    * @param {TaskStatus} [status]
    * @param {API.Stack<T, M, X>} [stack]
    */
@@ -462,34 +398,21 @@ const wake = function* (actor) {
     actor.status = ACTIVE
 
     const { active } = actor.stack
-    while (active.length > 0) {
-      const task = top(actor)
-      // let state = init(task)
+    let task = top(actor)
+    while (task) {
+      let state = init(task)
       // console.log(task)
       // keep processing insturctions until task is done (or until it is
       // suspendend)
-      // while (!state.done) {
-      // console.log(state, '>>')
-      // state = yield * step(actor, task, state.value)
-      // if (state.value == null) {
-      //   state = task.next(actor)
-      //   // state = task.next(actor)
-      // } else {
-      //   yield state.value
-      //   state = task.next(actor)
-      // }
-      // console.log(state, '<<')
-      const state = task.next(actor)
-      if (state.done) {
-        active.shift()
-      } else {
-        yield state.value
+      while (!state.done) {
+        // console.log(state, '>>')
+        state = yield* step(actor, task, state.value)
+        // console.log(state, '<<')
       }
-      // }
-      // actor.shift = false
 
       // If task is complete, or got suspended we move to a next task
-      // active.shift()
+      active.shift()
+      task = top(actor)
     }
 
     actor.status = IDLE
@@ -512,20 +435,19 @@ const top = actor => actor.stack.active[0]
  */
 const step = function* (actor, task, instruction) {
   try {
-    console.log(instruction.type, task.suspended)
     switch (instruction.type) {
       // All tasks start and resume with continue, so we just step through
       case "continue":
-        return task.next(actor)
-      // if task requested a reference to self create a view for it and pass
-      // it back in.
-      // case 'self':
+        return task.next()
+      // // if task requested a reference to self create a view for it and pass
+      // // it back in.
+      // case "self":
       //   return task.next(new Fork(task, actor))
-      // // if task is suspended we add it to the blocked tasks and change
-      // // state to "done" so that outer loop will move on to the next task.
-      // case 'suspend':
-      //   actor.stack.idle.add(task)
-      //   return SUSPEND
+      // if task is suspended we add it to the blocked tasks and change
+      // state to "done" so that outer loop will move on to the next task.
+      case "suspend":
+        actor.stack.idle.add(task)
+        return SUSPEND
       // if task has sent a message delegate to the executor and continue
       // execution with a returned value.
       case "send":
@@ -617,7 +539,7 @@ const MAIN = new Main()
 
 export const main = () => MAIN
 
-function* fork2() {
+export function* fork2() {
   const actor = yield* context()
   const fork = new Fork(actor)
 
@@ -626,51 +548,54 @@ function* fork2() {
   return fork
 }
 
-function* spawn2(task) {
+/**
+ * @template T, M, X
+ * @param {API.Task<void, M, X>} subtask
+ * @returns {API.Task<void, M, X>}
+ */
+
+export function* spawn(subtask) {
   const actor = yield* context()
-  const parent = top(actor)
-  if (!parent.fork || parent.fork.ended) {
-    parent.fork = new Fork(actor)
-    enqueue(parent.fork.task, actor)
-  } else {
-    console.log("have parent")
+  const task = top(actor)
+  if (!task.fork || task.fork.ended) {
+    task.fork = new Fork(actor)
+    enqueue(task.fork.task, actor)
   }
-  enqueue(task, parent.fork)
+  // const fork = Fork.of(actor)
+  // enqueue(fork.task, actor)
+
+  enqueue(subtask, task.fork)
 }
 
-function* join2() {
+/**
+ * @template M, X
+ * @returns {API.Task<void, never, X>}
+ */
+export function* join() {
   const actor = yield* context()
   const parent = top(actor)
-  if (parent.fork && !parent.fork.ended) {
-    console.log("> JOIN 3")
-    try {
-      enqueue(parent, actor)
-      const rest = parent.fork.task
-      parent.fork.task = parent
-      // parent.fork.task.return()
-      // yield * run(parent.fork)
-      yield* rest
-    } catch (e) {
-      console.error(e)
-    } finally {
-      console.log("finally")
-    }
-    console.log("< JOIN")
+  if (parent.fork) {
+    enqueue(parent, actor)
+    const rest = parent.fork.task
+    parent.fork.task = parent
+    // parent.fork.task.return()
+    // yield * run(parent.fork)
+    yield* rest
   }
 }
 function* demo() {
   // const fork = yield * fork2()
   console.log("spawn first")
-  yield* spawn2(child_demo("first"))
+  yield* spawn(child_demo("first"))
 
   console.log("parent nap")
   yield* sleep(800)
 
   console.log("spawn second")
-  yield* spawn2(child_demo("second"))
+  yield* spawn(child_demo("second"))
 
   console.log("join")
-  yield* join2()
+  yield* join()
 
   console.log("parent sleep")
   yield* sleep(0)

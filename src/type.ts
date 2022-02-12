@@ -26,6 +26,8 @@ export interface Task<T extends unknown = unknown, M = never, X = Error>
   throw(error: X): TaskState<T, M>
   return(value: T): TaskState<T, M>
   next(value?: unknown): TaskState<T, M>
+
+  fork?: Fork<T, M, X>
 }
 
 export type TaskState<
