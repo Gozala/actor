@@ -1,33 +1,59 @@
-{ "name": "actor"
-, "version": "0.0.2"
-, "description": "Experimental library implementing scala like actors in javascript."
-, "homepage": "http://github.com/Gozala/actor/"
-, "keywords": ["actor", "generators", "async", "javascript 1.7"]
-, "contributors":
-  [ "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)" ]
-, "repository":
-  { "type": "git"
-  , "url": "git://github.com/Gozala/actor.git"
-  }
-, "bugs": { "web": "http://github.com/Gozala/actor/issues/" }
-, "directories":
-  { "doc": "./docs"
-  , "lib": "./lib"
-  , "test": "./test"
-  }
-, "main": "./lib/actor.js"
-, "engines":
-  { "teleport": ">=0.2.0"
-  , "jetpack": "0.9.0"
-  }
-, "dependencies":
-  { "test": ">=0.0.10"
-  , "light-traits": ">=0.0.6"
-  , "q": ">=0.1.0"
-  }
-, "licenses" :
-  [ { "type" : "MPL 1.1/LGPL 2.1/GPL 2.0"
-    , "url" : "http://www.mozilla.org/MPL/"
+{
+  "name": "actor",
+  "version": "0.1.0",
+  "description": ".",
+  "keywords": [
+    "actor",
+    "generators",
+    "async",
+    "task",
+    "effect",
+    "fx"
+  ],
+  "scripts": {
+    "test:web": "playwright-test test/*.spec.js --cov && nyc report",
+    "test:node": "c8 --check-coverage --branches 100 --functions 100 --lines 100 mocha test/*.spec.js",
+    "coverage": "c8 --reporter=html mocha test/test-*.js && npm_config_yes=true npx st -d coverage -p 8080",
+    "typecheck": "tsc --build"
+  },
+  "type": "module",
+  "main": "./src/lib.js",
+  "types": "dist/src/lib.d.ts",
+  "exports": {
+    ".": {
+      "import": "./src/lib.js",
+      "types": "./dist/src/lib.d.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist/src"
+  ],
+  "c8": {
+    "exclude": [
+      "src/unixfs.proto.js",
+      "test/**",
+      "dist/**"
+    ]
+  },
+  "devDependencies": {
+    "typescript": "^4.5.5",
+    "@types/mocha": "^9.1.0",
+    "@types/chai": "^4.3.0",
+    "mocha": "^9.2.0",
+    "chai": "^4.3.6",
+    "nyc": "^15.1.0",
+    "playwright-test": "^7.2.2",
+    "c8": "^7.11.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/gozala/actor.git"
+  },
+  "licenses": [
+    {
+      "type": "MPL 1.1/LGPL 2.1/GPL 2.0",
+      "url": "http://www.mozilla.org/MPL/"
     }
   ]
 }
