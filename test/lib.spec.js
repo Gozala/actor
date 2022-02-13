@@ -339,7 +339,7 @@ describe("subtasks", () => {
   })
 })
 
-describe.skip("concurrency", () => {
+describe.only("concurrency", () => {
   it("can run tasks concurrently", async () => {
     /**
      * @param {string} name
@@ -355,11 +355,11 @@ describe.skip("concurrency", () => {
     }
 
     function* parent() {
-      yield* Task.spawn(child("a", 5, 6))
+      const a = yield* Task.spawn(child("a", 5, 6))
       yield* Task.sleep(5)
-      yield* Task.spawn(child("b", 7, 7))
+      const b = yield* Task.spawn(child("b", 7, 7))
 
-      yield* Task.join()
+      yield* Task.join(a, b)
     }
 
     const result = await inspect(parent)
@@ -386,10 +386,11 @@ describe.skip("concurrency", () => {
     assert.notDeepEqual([...mail].sort(), mail, "messages are not ordered")
   })
 
-  it("can dot this", async () => {
+  it("can fork and join", async () => {
     const output = ["Start"]
+    /** @param {string} msg */
     const log = msg => {
-      console.log(msg)
+      // console.log(msg)
       output.push(msg)
     }
     /**
@@ -403,33 +404,26 @@ describe.skip("concurrency", () => {
 
     function* actor() {
       log("Spawn A")
-      const a = Object.assign(
-        yield* Task.spawn(Object.assign(worker("A"), { tag: "Worker A" })),
-        { tag: "Actor A" }
-      )
-      console.log(a)
+      const a = yield* Task.spawn(worker("A"))
 
       log("Sleep")
-      yield* Task.sleep(10, "🤖")
+      yield* Task.sleep(20, "🤖")
 
       log("Spawn B")
-      const b = Object.assign(
-        yield* Task.spawn(Object.assign(worker("B"), { tag: "Worker B" })),
-        { tag: "Actor B" }
-      )
-
-      console.log(b)
+      const b = yield* Task.spawn(worker("B"))
 
       log("Join")
-      yield* Task.join(b)
+      const merge = Task.join(a, b)
+      merge.tag = "🚦"
+      yield* merge
 
       log("Nap")
-      // yield* Task.sleep(110)
+      yield* Task.sleep(2)
 
       log("Exit")
     }
 
-    await Task.promise(actor())
+    await Task.promise(Object.assign(actor(), { tag: "🤖" }))
 
     assert.deepEqual(
       [...output],

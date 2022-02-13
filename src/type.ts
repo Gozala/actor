@@ -32,9 +32,10 @@ export interface Task<T extends unknown = unknown, M = never, X = Error>
 
   fork?: Fork<T, M, X>
   state?: TaskState<T, M>
-  group?: Group | null
+  group?: TaskGroup<M, X>
 
   tag?: string
+  id?: number
 }
 
 export type TaskState<
@@ -86,18 +87,19 @@ export interface Fork<T, M, X> {
   join(): Task<void, M, X>
 }
 
-export type Group = Main | TaskGroup
+export type Group<M, X> = Main<M, X> | TaskGroup<M, X>
 
-export interface TaskGroup {
-  parent: Group
-  driver: Task<void, unknown, never>
-  stack: Stack
+export interface TaskGroup<M, X> {
+  id: number
+  parent: Group<M, X>
+  driver: Task<unknown, M, X>
+  stack: Stack<unknown, M, X>
 }
 
-export interface Main {
+export interface Main<M, X> {
   parent?: null
   status: Status
-  stack: Stack
+  stack: Stack<unknown, M, X>
 }
 
 export interface Stack<T = unknown, M = unknown, X = unknown> {

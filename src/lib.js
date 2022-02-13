@@ -25,10 +25,11 @@ export const suspend = function* () {
 }
 
 /**
- * @returns {Task.Task<Task.Task<unknown, unknown, unknown>, never, never>}
+ * @template T, M, X
+ * @returns {Task.Task<Task.Task<T, M, X>, never, never>}
  */
 export function* context() {
-  return /** @type {Task.Task<unknown, unknown, unknown>} */ (yield CONTEXT)
+  return /** @type {Task.Task<T, M, X>} */ (yield CONTEXT)
 }
 
 /**
@@ -37,13 +38,12 @@ export function* context() {
  */
 export function* sleep(duration, tag = "🥸") {
   const task = yield* context()
+  task.tag = tag
 
   const id = setTimeout(function () {
-    console.log("!!! WAKE", tag)
     enqueue(task)
   }, duration)
   try {
-    console.log("SLEEP", tag)
     yield* suspend()
   } finally {
     clearTimeout(id)
@@ -260,40 +260,42 @@ class Stack {
 }
 
 /** @typedef {'idle'|'active'} TaskStatus */
+/** @type {TaskStatus} */
 const IDLE = "idle"
 const ACTIVE = "active"
 
 /**
- * @template T, M, X
+ * @template M, X
+ * @implements {Task.TaskGroup<M, X>}
  */
 class Group {
   /**
-   * @param {Task.Group|null} parent
-   * @param {Task.Task<unknown, unknown, unknown>[]} [active]
-   * @param {Set<Task.Task<unknown, unknown, unknown>>} [idle]
-   * @param {TaskStatus} [status]
-   * @param {Task.Stack<unknown, unknown, unknown>} [stack]
+   * @param {Task.Task<unknown, M, X>} driver
+   * @param {Task.Task<void, M, X>[]} [active]
+   * @param {Set<Task.Task<void, M, X>>} [idle]
+   * @param {Task.Stack<void, M, X>} [stack]
    */
   constructor(
-    parent,
+    driver,
     active = [],
     idle = new Set(),
-    status = IDLE,
     stack = new Stack(active, idle)
   ) {
-    this.parent = parent
+    this.driver = driver
+    this.parent = driver.group || MAIN
     this.stack = stack
+    this.id = ++ID
+  }
+}
 
-    /** @type {Task.Task<void, unknown, never>} */
-    this.driver
-    if (parent) {
-      const task = drive(/** @type {Task.Group} */ (this))
-      task.tag = "Group.driver"
-      task.group = parent
-      this.driver = task
-    } else {
-      this.status = status
-    }
+/**
+ * @template M, X
+ * @implements {Task.Main<M, X>}
+ */
+class Main {
+  constructor() {
+    this.status = IDLE
+    this.stack = new Stack()
   }
 }
 
@@ -342,15 +344,19 @@ class Group {
 /**
  * Task to drive group to completion.
  *
- * @param {Task.Group} group
- * @returns {Task.Task<void, unknown, never>}
+ * @template M, X
+ * @param {Task.Group<M, X>} group
+ * @returns {Task.Task<void, M, X>}
  */
 const drive = function* (group) {
   // Unless group has no work
-  while (!isEmpty(group.stack)) {
+  while (true) {
     yield* step(group)
-
-    yield* suspend()
+    if (!isEmpty(group.stack)) {
+      yield* suspend()
+    } else {
+      break
+    }
   }
 }
 
@@ -367,6 +373,7 @@ export const enqueue = task => {
   // If task is not a member of any group assign it to main group
   let group = task.group || MAIN
   group.stack.active.push(task)
+  group.stack.idle.delete(task)
 
   // then walk up the group chain and unblock their driver tasks.
   while (group.parent) {
@@ -375,6 +382,7 @@ export const enqueue = task => {
       idle.delete(group.driver)
       active.push(group.driver)
     } else {
+      console.error("group driver is not idle", Task.id(group.driver))
       // if driver was not blocked it must have been unblocked by
       // other task so stop there.
       break
@@ -385,18 +393,26 @@ export const enqueue = task => {
 
   if (MAIN.status === IDLE) {
     MAIN.status = ACTIVE
-    for (const instruction of drive(MAIN)) {
-      if (instruction === SUSPEND) {
-        break
-      }
+    for (const message of step(MAIN)) {
     }
+
     MAIN.status = IDLE
   }
 }
 
 /**
  * @template T, M, X
- * @param {Task.Group} context
+ * @param {Task.Task<T, M, X>} task
+ */
+export const id = task =>
+  `${task.tag || ""}:${task.id || (task.id = ++ID)}@${
+    task.group ? task.group.id : "main"
+  }`
+
+let DEPTH = 0
+/**
+ * @template M, X
+ * @param {Task.Group<M, X>} context
  */
 
 const step = function* (context) {
@@ -404,10 +420,16 @@ const step = function* (context) {
   let task = top(context)
   while (task) {
     // we never actually set task.state just use it to infer type
+    const { group } = task
     let state = task.next(task)
-    // keep processing insturctions until task is done (or until it is
-    // suspendend)
-    loop: while (!state.done) {
+    // Keep processing insturctions until task is done, it send suspend request
+    // or it's group changed.
+    // ⚠️ Group changes require extra care so please make sure to understand
+    // the detail here. It occurs when spawned task(s) are joined into a group
+    // which will change the task driver, that is why if group changes we need
+    // to drop the task otherwise race condition will occur due to task been
+    // driven by multiple concurrent schedulers.
+    loop: while (!state.done && task.group === group) {
       try {
         const instruction = state.value
         switch (instruction) {
@@ -439,7 +461,8 @@ const step = function* (context) {
 }
 
 /**
- * @param {Task.Group} group
+ * @template M, X
+ * @param {Task.Group<M, X>} group
  */
 
 const top = group => group.stack.active[0]
@@ -496,109 +519,37 @@ class AbortError extends Error {
 //   task.throw(new AbortError('Task was aborted'))
 // }
 
-const MAIN =
-  /** @type {Task.Main} */
-  (Object.assign(new Group(null), { status: IDLE }))
+/** @type {Task.Main<unknown, unknown>} */
+const MAIN = new Main()
+let ID = 0
 
 /**
  * @template T, M, X
- * @param {Task.Task<T, M, X>} subtask
+ * @param {Task.Task<T, M, X>} task
  * @returns {Task.Task<Task.Task<T, M, X>, M, X>}
  */
 
-export function* spawn(subtask) {
-  const actor = yield* context()
-  enqueue(subtask)
-  // return subtask
-  // const fork = new Fork(actor, [subtask])
-  // // enqueue(fork.task, actor)
-  // console.log("spawn", fork.stack)
+export function* spawn(task) {
+  enqueue(task)
 
-  // const fork = new Fork(actor)
-  // fork.stack.active.push(Object.assign(subtask, { tag: "Spawn.subtask" }))
-  // // enqueue(subtask, fork)
-  // // console.log(actor.status)
-  // enqueue(fork.task, actor)
-
-  // console.log(fork)
-
-  // if (!task.fork || task.fork.ended) {
-  //   task.fork = new Fork(actor)
-  //   enqueue(task.fork.task, actor)
-  // }
-  // const fork = Fork.of(actor)
-  // enqueue(fork.task, actor)
-
-  // enqueue(subtask, task.fork)
-
-  return { task: subtask }
+  return task
 }
 
 /**
  * @template M, X
- * @returns {Task.Task<void, never, X>}
+ * @param {Task.Task<void, M, X>[]} tasks
+ * @returns {Task.Task<void, M, X>}
  */
-export function* join(...forks) {
-  const actor = yield* context()
-  const active = forks
-  const group = new Stack()
-  for (const fork of forks) {
-    move(fork, group)
+export function* join(...tasks) {
+  const self = yield* context()
+  /** @type {Task.TaskGroup<M, X>} */
+  const group = new Group(self)
+
+  for (const task of tasks) {
+    move(task, group)
   }
 
-  return drive(group)
-
-  // // const active = forks.filter(isPending)
-  // console.log(">>>>", actor.stack)
-  // if (active.length > 1) {
-  //   active.shift()
-  //   const actor = yield* context()
-  //   // const task = top(actor)
-  //   // const join = new Fork(actor)
-  //   for (const fork of active) {
-  //     yield* fork.task
-  //     // fork.task.actor = join
-
-  //     // actor.stack.idle.delete(fork.wrapper)
-  //     // join.stack.idle.add(fork.task)
-  //     //   fork.supervisor.stack.idle.delete(fork.task)
-  //     //   fork.supervisor.stack.idle.add(join.task)
-  //     //   // fork.task = task
-
-  //     //   // fork.supervisor = join
-  //     //   join.stack.active.push(fork.task)
-
-  //     //   console.log("?", fork)
-  //     //   // fork.task.return()
-  //     //   // join.stack.active.push(run(fork))
-  //   }
-  //   // yield* join.task
-  //   console.log("joined")
-  //   // console.log("<<", join)
-  // } else if (active.length === 1) {
-  //   // const actor = yield* context()
-  //   // const task = top(actor)
-  //   const [fork] = active
-
-  //   // const rest = fork.task
-  //   // fork.task = task
-
-  //   // enqueue(task, actor)
-  //   // yield* rest
-  //   // if (actor.stack.)
-  //   dequeue(fork.task, actor)
-
-  //   yield* fork.task
-  // }
-  // const task = top(actor)
-  // if (task.fork) {
-  //   enqueue(task, actor)
-  //   const rest = task.fork.task
-  //   task.fork.task = task
-  //   // parent.fork.task.return()
-  //   // yield * run(parent.fork)
-  //   yield* rest
-  // }
+  yield* drive(group)
 }
 
 // /**
@@ -661,69 +612,34 @@ export function* join(...forks) {
 //   // }
 // }
 
-const dequeue = (task, { stack }) => {
-  let index = stack.active.indexOf(task)
-  if (index > 0) {
-    stack.active.splice(index, 1)
-  }
-}
-
 /**
- * @template T
- * @param {Iterable<T>} source
+ * @template M, X
+ * @param {Task.Task<void, M, X>} task
+ * @param {Group<M, X>} to
  */
-const consume = source => {
-  for (const _message of source) {
+const move = (task, to) => {
+  const from = task.group || MAIN
+  if (from !== to) {
+    const { active, idle } = from.stack
+    const target = to.stack
+    // If it is idle just move from one group to the other
+    // and update the group task thinks it belongs to.
+    if (idle.has(task)) {
+      idle.delete(task)
+      target.idle.add(task)
+      task.group = to
+    } else {
+      const index = active.indexOf(task)
+      // If task is in the job queue, we move it to a target job queue. Moving
+      // top task in the queue requires extra care so it does not end up
+      // processed by two groups which would lead to race. For that reason
+      // `step` loop checks for group changes on each turn.
+      if (index >= 0) {
+        active.splice(index, 1)
+        target.active.push(task)
+        task.group = to
+      }
+      // otherwise task is complete
+    }
   }
 }
-
-// async function demo() {
-//   console.log("start")
-//   const output = ["Start"]
-//   const log = msg => {
-//     console.log(msg)
-//     output.push(msg)
-//   }
-//   /**
-//    * @param {string} name
-//    */
-//   function* worker(name) {
-//     log(`> ${name} sleep`)
-//     yield* Task.sleep(5, "👷")
-//     log(`< ${name} wake`)
-//   }
-
-//   function* actor() {
-//     log("Spawn A")
-//     const a = Object.assign(
-//       yield* Task.spawn(Object.assign(worker("A"), { tag: "Worker A" })),
-//       { tag: "Actor A" }
-//     )
-//     console.log(a)
-
-//     log("Sleep")
-//     yield* Task.sleep(10, "🤖")
-
-//     log("Spawn B")
-//     const b = Object.assign(
-//       yield* Task.spawn(Object.assign(worker("B"), { tag: "Worker B" })),
-//       { tag: "Actor B" }
-//     )
-
-//     console.log(b)
-
-//     log("Join")
-//     yield* Task.join(b)
-
-//     log("Nap")
-//     // yield* Task.sleep(110)
-
-//     log("Exit")
-//   }
-
-//   await Task.promise(actor())
-
-//   console.log("$$$$$$$$$$$$$$", output)
-// }
-
-// demo()
