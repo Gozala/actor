@@ -1,16 +1,16 @@
-import * as API from "./type.js"
+import * as Task from "./type.js"
 
 export * from "./type.js"
 
 /**
  * @template {string} Tag
  * @template T
- * @param {{ [K in Tag]: API.Task<T, void> }} source
- * @returns {API.Effect<Tagged<Tag, T>>}
+ * @param {{ [K in Tag]: Task.Task<T, void> }} source
+ * @returns {Task.Effect<Tagged<Tag, T>>}
  */
 export const perform = function* (source) {
   const [tag, task] =
-    /** @type {[Tag, API.Task<T>]} */
+    /** @type {[Tag, Task.Task<T>]} */
     (Object.entries(source)[0])
 
   const message = yield* task
@@ -18,64 +18,66 @@ export const perform = function* (source) {
 }
 
 /**
- * @returns {API.Task<void, never, never>}
+ * @returns {Task.Task<void, never, never>}
  */
 export const suspend = function* () {
-  yield { type: "suspend" }
+  yield SUSPEND
+}
+
+/**
+ * @returns {Task.Task<Task.Task<unknown, unknown, unknown>, never, never>}
+ */
+export function* context() {
+  return /** @type {Task.Task<unknown, unknown, unknown>} */ (yield CONTEXT)
 }
 
 /**
  * @param {number} duration
- * @returns {API.Task<void, never, never>}
+ * @returns {Task.Task<void, never, never>}
  */
-export function* sleep(duration) {
-  const actor = yield* context()
-  const task = top(actor)
-  const id = setTimeout(dispatch, duration, task, actor)
+export function* sleep(duration, tag = "🥸") {
+  const task = yield* context()
+
+  const id = setTimeout(function () {
+    console.log("!!! WAKE", tag)
+    enqueue(task)
+  }, duration)
   try {
+    console.log("SLEEP", tag)
     yield* suspend()
   } finally {
     clearTimeout(id)
   }
 }
 
-/**
- * @template T, M, X
- * @returns {API.Task<API.Fork<T, M, X>}
- */
-export function* self() {
-  return /** @type {API.Fork<T, M, X>} */ (yield { type: "self" })
-}
-
-/**
- * @template T, M, X
- * @returns {API.Task<API.Fork<T, M, X>}
- */
-export function* context() {
-  return /** @type {API.Fork<T, M, X>} */ (yield { type: "context" })
-}
+// /**
+//  * @template T, M, X
+//  * @returns {Task.Task<Task.Fork<T, M, X>}
+//  */
+// export function* self() {
+//   return /** @type {Task.Fork<T, M, X>} */ (yield { type: "self" })
+// }
 
 /**
  * @template T, [X=unknown]
- * @param {API.Await<T>} input
- * @returns {API.Task<T, never, X>}
+ * @param {Task.Await<T>} input
+ * @returns {Task.Task<T, never, X>}
  */
 export const wait = function* (input) {
   if (isAsync(input)) {
-    const actor = yield* context()
-    const task = top(actor)
+    const task = yield* context()
     let failed = false
     let output
     input.then(
       value => {
         failed = false
         output = value
-        dispatch(task, actor)
+        enqueue(task)
       },
       error => {
         failed = true
         output = error
-        dispatch(task, actor)
+        enqueue(task)
       }
     )
 
@@ -104,34 +106,36 @@ const isAsync = node =>
 /**
  * @template T
  * @param {T} message
- * @returns {API.Effect<T>}
+ * @returns {Task.Effect<T>}
  */
 export const send = function* (message) {
-  yield { type: "send", message }
+  yield message
 }
 
 /**
  * @template {string} Tag
  * @template T
- * @param {{ [K in Tag]: API.Effect<T> }} source
- * @returns {API.Effect<Tagged<Tag, T>>}
+ * @param {{ [K in Tag]: Task.Effect<T> }} source
+ * @returns {Task.Effect<Tagged<Tag, T>>}
  */
 export const listen = function* (source) {
   const [tag, task] =
-    /** @type {[Tag, API.Task<void, T>]} */
+    /** @type {[Tag, Task.Task<void, T>]} */
     (Object.entries(source)[0])
 
   for (const op of task) {
-    if (op.type === "send") {
-      yield { type: "send", message: withTag(tag, op.message) }
-    } else {
-      yield op
+    switch (op) {
+      case SUSPEND:
+      case CONTEXT:
+        yield op
+      default:
+        yield withTag(tag, /** @type {T} */ (op))
     }
   }
 }
 
 /**
- * @type {API.Effect<never>}
+ * @type {Task.Effect<never>}
  */
 export const nofx = (function* () {})()
 
@@ -174,20 +178,20 @@ export const nofx = (function* () {})()
 //   }
 // }
 
-/**
- * @template {string} Tag
- * @template T
- * @param {API.Effect<T>} effect
- * @param {Tag} tag
- * @returns {API.Effect<{type: Tag} & {[K in Tag]: T}>}
- */
-export const tag = function* (effect, tag) {
-  for (const op of effect) {
-    if (op.type === "send") {
-      yield { type: "send", message: withTag(tag, op.message) }
-    }
-  }
-}
+// /**
+//  * @template {string} Tag
+//  * @template T
+//  * @param {Task.Effect<T>} effect
+//  * @param {Tag} tag
+//  * @returns {Task.Effect<{type: Tag} & {[K in Tag]: T}>}
+//  */
+// export const tag = function* (effect, tag) {
+//   for (const op of effect) {
+//     if (op.type === "send") {
+//       yield { type: "send", message: withTag(tag, op.message) }
+//     }
+//   }
+// }
 
 /**
  * @template {string} Tag
@@ -207,26 +211,29 @@ const withTag = (tag, value) =>
 
 /**
  * @template T, M, X
- * @param {API.Task<T, M, X>} task
+ * @param {Task.Task<T, M, X>} task
  */
 export const execute = task => enqueue(task)
 
 /**
  * @template T, M, X
- * @param {API.Task<T, M, X>} task
+ * @param {Task.Task<T, M, X>} task
  * @returns {Promise<T>}
  */
 export const promise = task =>
   new Promise((resolve, reject) => execute(then(task, resolve, reject)))
 
 /**
+ * Kind of like promise.then which is handy when you want to extract result
+ * from the given task from the outside.
+ *
  * @template T, M, X, U
- * @param {API.Task<T, M, X>} task
+ * @param {Task.Task<T, M, X>} task
  * @param {(value:T) => U} resolve
  * @param {(error:X) => U} reject
- * @returns {API.Task<U, M, never>}
+ * @returns {Task.Task<U, M, never>}
  */
-function* then(task, resolve, reject) {
+export function* then(task, resolve, reject) {
   try {
     return resolve(yield* task)
   } catch (error) {
@@ -234,25 +241,17 @@ function* then(task, resolve, reject) {
   }
 }
 
-/** @type {{done:true, value: API.Suspend }} */
-const SUSPEND = { done: true, value: { type: "suspend" } }
-/** @type {{done:false, value: API.Continue}} */
-const CONTINUE = { done: false, value: { type: "continue" } }
-
-/**
- * @template T, M, X
- * @param {API.Task<T, M, X>} _task
- * @returns {API.ExecutionState<T, M>}
- */
-const init = _task => CONTINUE
+const SUSPEND = Symbol("suspend")
+const CONTEXT = Symbol("context")
+/** @typedef {typeof SUSPEND|typeof CONTEXT} Instruction */
 
 /**
  * @template T, M, X
  */
 class Stack {
   /**
-   * @param {API.Task<T, M, X>[]} [active]
-   * @param {Set<API.Task<T, M, X>>} [idle]
+   * @param {Task.Task<T, M, X>[]} [active]
+   * @param {Set<Task.Task<T, M, X>>} [idle]
    */
   constructor(active = [], idle = new Set()) {
     this.active = active
@@ -267,207 +266,183 @@ const ACTIVE = "active"
 /**
  * @template T, M, X
  */
-class Main {
+class Group {
   /**
+   * @param {Task.Group|null} parent
+   * @param {Task.Task<unknown, unknown, unknown>[]} [active]
+   * @param {Set<Task.Task<unknown, unknown, unknown>>} [idle]
    * @param {TaskStatus} [status]
-   * @param {API.Stack<T, M, X>} [stack]
+   * @param {Task.Stack<unknown, unknown, unknown>} [stack]
    */
-  constructor(status = IDLE, stack = new Stack()) {
-    this.status = status
-    this.stack = stack
-  }
-}
-
-/**
- * @template T, M, X
- * @implements {API.Fork<T, M, X>}
- * @implements {API.TaskView}
- */
-class Fork {
-  /**
-   * @template M, X
-   * @param {API.Actor<void, M, X>} actor
-   */
-  static of(actor) {
-    const task = top(actor)
-    if (task.fork) {
-      return task.fork
-    } else {
-      const fork = new Fork(actor)
-      task.fork = fork
-      return fork
-    }
-  }
-  /**
-   * @param {API.Actor<void, M, X>} supervisor
-   * @param {TaskStatus} [status]
-   * @param {API.Stack<T, M, X>} [stack]
-   */
-  constructor(supervisor, status = IDLE, stack = new Stack()) {
-    /** @type {API.Task<void, M, X>} */
-    this.task = run(this)
-    this.supervisor = supervisor
-    this.status = status
+  constructor(
+    parent,
+    active = [],
+    idle = new Set(),
+    status = IDLE,
+    stack = new Stack(active, idle)
+  ) {
+    this.parent = parent
     this.stack = stack
 
-    /** @type {() => void}  */
-    this.resume = () => resume(this)
-  }
-
-  /**
-   * @param {API.Task<void, M, X>} task
-   */
-  *fork(task) {
-    // @ts-ignore
-    this.stack.active.push(task)
-  }
-
-  /**
-   * @returns {API.Task<void, M, X>}
-   */
-  *join() {
-    yield* run(this)
-  }
-}
-
-/**
- * @template T, M, X
- * @param {API.Actor<T, M, X>} actor
- */
-const resume = actor => {
-  while (actor) {
-    const { supervisor } = actor
-    if (supervisor) {
-      const { idle, active } = supervisor.stack
-      // if (idle.has(actor.task)) {
-      idle.delete(actor.task)
-      active.push(actor.task)
-
-      // Basically we do a recursion here
-      actor = supervisor
-      // } else {
-      // console.log('task was not suspended', actor)
-      // return
-      // }
+    /** @type {Task.Task<void, unknown, never>} */
+    this.driver
+    if (parent) {
+      const task = drive(/** @type {Task.Group} */ (this))
+      task.tag = "Group.driver"
+      task.group = parent
+      this.driver = task
     } else {
-      actor
-      // this means we reached the main thread here so we
-      // just conusme current batch of messages
-      // eslint-disable-next-line no-unused-vars
-      for (const _message of wake(actor)) {
-      }
-      return
+      this.status = status
     }
   }
 }
 
+// /**
+//  * @param {Task.Group} group
+//  * @returns {Task.Task<void, unknown, never>}
+//  */
+// const run = function* (group) {
+//   while (isPending(group)) {
+//     yield* step(group)
+
+//     yield* suspend()
+//   }
+// }
+
+// /**
+//  * @template T, M, X
+//  * @implements {Task.Fork<T, M, X>}
+//  * @implements {Task.TaskView}
+//  */
+// class Fork {
+//   /**
+//    * @param {Task.Actor<void, M, X>} supervisor
+//    * @param {Task.Task<T, M, X>[]} [active]
+//    * @param {Set<Task.Task<T, M, X>>} [idle]
+//    * @param {TaskStatus} [status]
+//    * @param {Task.Stack<T, M, X>} [stack]
+//    */
+//   constructor(
+//     supervisor,
+//     active = [],
+//     idle = new Set(),
+//     status = IDLE,
+//     stack = new Stack(active, idle)
+//   ) {
+//     /** @type {Task.Task<void, M, X>} */
+//     // this.task = Object.assign(run(this), { tag: "Fork.run" })
+//     this.supervisor = supervisor
+//     this.status = status
+//     this.stack = stack
+
+//     /** @type {() => void}  */
+//   }
+// }
+
 /**
- * @template T, M, X
- * @param {API.Actor<T, M, X>} actor
+ * Task to drive group to completion.
+ *
+ * @param {Task.Group} group
+ * @returns {Task.Task<void, unknown, never>}
  */
-export const iterate = function* (actor) {
-  for (const send of wake(actor)) {
-    yield send.message
+const drive = function* (group) {
+  // Unless group has no work
+  while (!isEmpty(group.stack)) {
+    yield* step(group)
+
+    yield* suspend()
   }
 }
 
 /**
- * @template T, M, X
- * @param {API.Actor<T, M, X>} actor
+ * @param {Task.Stack} stack
  */
-const run = function* (actor) {
-  while (true) {
-    const result = yield* wake(actor)
+const isEmpty = stack => stack.idle.size === 0 && stack.active.length === 0
 
-    if (actor.stack.idle.size > 0) {
-      yield* suspend()
+/**
+ * @template T, M, X
+ * @param {Task.Task<T, M, X>} task
+ */
+export const enqueue = task => {
+  // If task is not a member of any group assign it to main group
+  let group = task.group || MAIN
+  group.stack.active.push(task)
+
+  // then walk up the group chain and unblock their driver tasks.
+  while (group.parent) {
+    const { idle, active } = group.parent.stack
+    if (idle.has(group.driver)) {
+      idle.delete(group.driver)
+      active.push(group.driver)
     } else {
-      actor.ended = true
-      return result
+      // if driver was not blocked it must have been unblocked by
+      // other task so stop there.
+      break
     }
+
+    group = group.parent
   }
-}
 
-/**
- * @template T, M, X
- * @param {API.Actor<T, M, X>} actor
- */
-
-const wake = function* (actor) {
-  if (actor.status === IDLE) {
-    actor.status = ACTIVE
-
-    const { active } = actor.stack
-    let task = top(actor)
-    while (task) {
-      let state = init(task)
-      // console.log(task)
-      // keep processing insturctions until task is done (or until it is
-      // suspendend)
-      while (!state.done) {
-        // console.log(state, '>>')
-        state = yield* step(actor, task, state.value)
-        // console.log(state, '<<')
+  if (MAIN.status === IDLE) {
+    MAIN.status = ACTIVE
+    for (const instruction of drive(MAIN)) {
+      if (instruction === SUSPEND) {
+        break
       }
-
-      // If task is complete, or got suspended we move to a next task
-      active.shift()
-      task = top(actor)
     }
-
-    actor.status = IDLE
+    MAIN.status = IDLE
   }
 }
 
 /**
  * @template T, M, X
- * @param {API.Actor<T, M, X>} actor
- * @returns {API.Task<T, M, X>} actor
+ * @param {Task.Group} context
  */
 
-const top = actor => actor.stack.active[0]
-
-/**
- * @template T, M, X
- * @param {API.Actor<T, M, X>} actor
- * @param {API.Task<T, M, X>} task
- * @param {API.Instruction<M>|API.Continue} instruction
- */
-const step = function* (actor, task, instruction) {
-  try {
-    switch (instruction.type) {
-      // All tasks start and resume with continue, so we just step through
-      case "continue":
-        return task.next()
-      // // if task requested a reference to self create a view for it and pass
-      // // it back in.
-      // case "self":
-      //   return task.next(new Fork(task, actor))
-      // if task is suspended we add it to the blocked tasks and change
-      // state to "done" so that outer loop will move on to the next task.
-      case "suspend":
-        actor.stack.idle.add(task)
-        return SUSPEND
-      // if task has sent a message delegate to the executor and continue
-      // execution with a returned value.
-      case "send":
-        return task.next(yield instruction)
-      // if instruction is unknown ask executor to interpret it and
-      // act upon it's command.
-      // @ts-ignore
-      case "context":
-        return task.next(actor)
-      default:
-        return task.throw(
-          // @ts-expect-error - This does not match expected error type,
-          // however I'm not sure how to handle this better.
-          new AbortError(`Unknown instruction ${JSON.stringify(instruction)}`)
-        )
+const step = function* (context) {
+  const { active } = context.stack
+  let task = top(context)
+  while (task) {
+    // we never actually set task.state just use it to infer type
+    let state = task.next(task)
+    // keep processing insturctions until task is done (or until it is
+    // suspendend)
+    loop: while (!state.done) {
+      try {
+        const instruction = state.value
+        switch (instruction) {
+          // if task is suspended we add it to the idle list and break the loop
+          // to move to a next task.
+          case SUSPEND:
+            context.stack.idle.add(task)
+            break loop
+          // if task requested a context (which is usually to suspend itself)
+          // pass back a task reference and continue.
+          case CONTEXT:
+            state = task.next(task)
+            break
+          default:
+            // otherwise task sent a message which we yield to the driver and
+            // continue
+            state = task.next(yield instruction)
+            break
+        }
+      } catch (error) {
+        state = task.throw(/** @type {X} */ (error))
+      }
     }
-  } catch (error) {
-    return task.throw(/** @type {X} */ (error))
+
+    // If task is complete, or got suspended we move to a next task
+    active.shift()
+    task = top(context)
   }
 }
+
+/**
+ * @param {Task.Group} group
+ */
+
+const top = group => group.stack.active[0]
 
 class AbortError extends Error {
   get name() {
@@ -479,44 +454,34 @@ class AbortError extends Error {
   }
 }
 
-/**
- * @template T, M, X
- * @param {API.Task<T, M, X>} task
- * @param {API.Actor<T, M, X>} actor
- */
-export const enqueue = (task, actor = main()) => {
-  actor.stack.active.push(task)
-  resume(actor)
-}
+// /**
+//  * @template T, M, X
+//  * @param {API.Task<T, M, X>} task
+//  * @param {API.Actor<T, M, X>} actor
+//  */
+// const dispatch = (task, actor) => {
+//   while (actor) {
+//     const { idle, active } = actor.stack
+//     if (idle.has(task)) {
+//       idle.delete(task)
+//       active.push(task)
 
-/**
- * @template T, M, X
- * @param {API.Task<T, M, X>} task
- * @param {API.Actor<T, M, X>} actor
- */
-const dispatch = (task, actor) => {
-  while (actor) {
-    const { idle, active } = actor.stack
-    if (idle.has(task)) {
-      idle.delete(task)
-      active.push(task)
-
-      if (actor.supervisor) {
-        task = actor.task
-        actor = actor.supervisor
-      } else {
-        // this means we reached the main thread here so we
-        // just conusme current batch of messages
-        // eslint-disable-next-line no-unused-vars
-        for (const _message of wake(actor)) {
-        }
-        return
-      }
-    } else {
-      return
-    }
-  }
-}
+//       if (actor.supervisor) {
+//         task = actor.task
+//         actor = actor.supervisor
+//       } else {
+//         // this means we reached the main thread here so we
+//         // just conusme current batch of messages
+//         // eslint-disable-next-line no-unused-vars
+//         for (const _message of wake(actor)) {
+//         }
+//         return
+//       }
+//     } else {
+//       return
+//     }
+//   }
+// }
 
 // /**
 //  * @template T, M, X
@@ -531,81 +496,234 @@ const dispatch = (task, actor) => {
 //   task.throw(new AbortError('Task was aborted'))
 // }
 
-// @ts-ignore
-// const DEFAULT_GROUP = new TaskGroupView()
-
-/** @type {API.Main} */
-const MAIN = new Main()
-
-export const main = () => MAIN
-
-export function* fork2() {
-  const actor = yield* context()
-  const fork = new Fork(actor)
-
-  enqueue(fork.task, actor)
-
-  return fork
-}
+const MAIN =
+  /** @type {Task.Main} */
+  (Object.assign(new Group(null), { status: IDLE }))
 
 /**
  * @template T, M, X
- * @param {API.Task<void, M, X>} subtask
- * @returns {API.Task<void, M, X>}
+ * @param {Task.Task<T, M, X>} subtask
+ * @returns {Task.Task<Task.Task<T, M, X>, M, X>}
  */
 
 export function* spawn(subtask) {
   const actor = yield* context()
-  const task = top(actor)
-  if (!task.fork || task.fork.ended) {
-    task.fork = new Fork(actor)
-    enqueue(task.fork.task, actor)
-  }
+  enqueue(subtask)
+  // return subtask
+  // const fork = new Fork(actor, [subtask])
+  // // enqueue(fork.task, actor)
+  // console.log("spawn", fork.stack)
+
+  // const fork = new Fork(actor)
+  // fork.stack.active.push(Object.assign(subtask, { tag: "Spawn.subtask" }))
+  // // enqueue(subtask, fork)
+  // // console.log(actor.status)
+  // enqueue(fork.task, actor)
+
+  // console.log(fork)
+
+  // if (!task.fork || task.fork.ended) {
+  //   task.fork = new Fork(actor)
+  //   enqueue(task.fork.task, actor)
+  // }
   // const fork = Fork.of(actor)
   // enqueue(fork.task, actor)
 
-  enqueue(subtask, task.fork)
+  // enqueue(subtask, task.fork)
+
+  return { task: subtask }
 }
 
 /**
  * @template M, X
- * @returns {API.Task<void, never, X>}
+ * @returns {Task.Task<void, never, X>}
  */
-export function* join() {
+export function* join(...forks) {
   const actor = yield* context()
-  const parent = top(actor)
-  if (parent.fork) {
-    enqueue(parent, actor)
-    const rest = parent.fork.task
-    parent.fork.task = parent
-    // parent.fork.task.return()
-    // yield * run(parent.fork)
-    yield* rest
+  const active = forks
+  const group = new Stack()
+  for (const fork of forks) {
+    move(fork, group)
+  }
+
+  return drive(group)
+
+  // // const active = forks.filter(isPending)
+  // console.log(">>>>", actor.stack)
+  // if (active.length > 1) {
+  //   active.shift()
+  //   const actor = yield* context()
+  //   // const task = top(actor)
+  //   // const join = new Fork(actor)
+  //   for (const fork of active) {
+  //     yield* fork.task
+  //     // fork.task.actor = join
+
+  //     // actor.stack.idle.delete(fork.wrapper)
+  //     // join.stack.idle.add(fork.task)
+  //     //   fork.supervisor.stack.idle.delete(fork.task)
+  //     //   fork.supervisor.stack.idle.add(join.task)
+  //     //   // fork.task = task
+
+  //     //   // fork.supervisor = join
+  //     //   join.stack.active.push(fork.task)
+
+  //     //   console.log("?", fork)
+  //     //   // fork.task.return()
+  //     //   // join.stack.active.push(run(fork))
+  //   }
+  //   // yield* join.task
+  //   console.log("joined")
+  //   // console.log("<<", join)
+  // } else if (active.length === 1) {
+  //   // const actor = yield* context()
+  //   // const task = top(actor)
+  //   const [fork] = active
+
+  //   // const rest = fork.task
+  //   // fork.task = task
+
+  //   // enqueue(task, actor)
+  //   // yield* rest
+  //   // if (actor.stack.)
+  //   dequeue(fork.task, actor)
+
+  //   yield* fork.task
+  // }
+  // const task = top(actor)
+  // if (task.fork) {
+  //   enqueue(task, actor)
+  //   const rest = task.fork.task
+  //   task.fork.task = task
+  //   // parent.fork.task.return()
+  //   // yield * run(parent.fork)
+  //   yield* rest
+  // }
+}
+
+// /**
+//  * @template M, X
+//  * @returns {Task.Task<void, never, X>}
+//  */
+// export function* join(...forks) {
+//   const actor = yield* context()
+//   const active = forks
+//   // const active = forks.filter(isPending)
+//   console.log(">>>>", actor.stack)
+//   if (active.length > 1) {
+//     active.shift()
+//     const actor = yield* context()
+//     // const task = top(actor)
+//     // const join = new Fork(actor)
+//     for (const fork of active) {
+//       yield* fork.task
+//       // fork.task.actor = join
+
+//       // actor.stack.idle.delete(fork.wrapper)
+//       // join.stack.idle.add(fork.task)
+//       //   fork.supervisor.stack.idle.delete(fork.task)
+//       //   fork.supervisor.stack.idle.add(join.task)
+//       //   // fork.task = task
+
+//       //   // fork.supervisor = join
+//       //   join.stack.active.push(fork.task)
+
+//       //   console.log("?", fork)
+//       //   // fork.task.return()
+//       //   // join.stack.active.push(run(fork))
+//     }
+//     // yield* join.task
+//     console.log("joined")
+//     // console.log("<<", join)
+//   } else if (active.length === 1) {
+//     // const actor = yield* context()
+//     // const task = top(actor)
+//     const [fork] = active
+
+//     // const rest = fork.task
+//     // fork.task = task
+
+//     // enqueue(task, actor)
+//     // yield* rest
+//     // if (actor.stack.)
+//     dequeue(fork.task, actor)
+
+//     yield* fork.task
+//   }
+//   // const task = top(actor)
+//   // if (task.fork) {
+//   //   enqueue(task, actor)
+//   //   const rest = task.fork.task
+//   //   task.fork.task = task
+//   //   // parent.fork.task.return()
+//   //   // yield * run(parent.fork)
+//   //   yield* rest
+//   // }
+// }
+
+const dequeue = (task, { stack }) => {
+  let index = stack.active.indexOf(task)
+  if (index > 0) {
+    stack.active.splice(index, 1)
   }
 }
-function* demo() {
-  // const fork = yield * fork2()
-  console.log("spawn first")
-  yield* spawn(child_demo("first"))
 
-  console.log("parent nap")
-  yield* sleep(800)
-
-  console.log("spawn second")
-  yield* spawn(child_demo("second"))
-
-  console.log("join")
-  yield* join()
-
-  console.log("parent sleep")
-  yield* sleep(0)
-  console.log("perent exit")
+/**
+ * @template T
+ * @param {Iterable<T>} source
+ */
+const consume = source => {
+  for (const _message of source) {
+  }
 }
 
-function* child_demo(name, wake) {
-  console.log(`> ${name} sleep`)
-  if (!wake) yield* sleep(100)
-  console.log(`< ${name} wake`)
-}
+// async function demo() {
+//   console.log("start")
+//   const output = ["Start"]
+//   const log = msg => {
+//     console.log(msg)
+//     output.push(msg)
+//   }
+//   /**
+//    * @param {string} name
+//    */
+//   function* worker(name) {
+//     log(`> ${name} sleep`)
+//     yield* Task.sleep(5, "👷")
+//     log(`< ${name} wake`)
+//   }
 
-enqueue(demo())
+//   function* actor() {
+//     log("Spawn A")
+//     const a = Object.assign(
+//       yield* Task.spawn(Object.assign(worker("A"), { tag: "Worker A" })),
+//       { tag: "Actor A" }
+//     )
+//     console.log(a)
+
+//     log("Sleep")
+//     yield* Task.sleep(10, "🤖")
+
+//     log("Spawn B")
+//     const b = Object.assign(
+//       yield* Task.spawn(Object.assign(worker("B"), { tag: "Worker B" })),
+//       { tag: "Actor B" }
+//     )
+
+//     console.log(b)
+
+//     log("Join")
+//     yield* Task.join(b)
+
+//     log("Nap")
+//     // yield* Task.sleep(110)
+
+//     log("Exit")
+//   }
+
+//   await Task.promise(actor())
+
+//   console.log("$$$$$$$$$$$$$$", output)
+// }
+
+// demo()

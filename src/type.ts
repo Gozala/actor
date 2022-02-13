@@ -1,3 +1,6 @@
+export * from "./lib.js"
+
+import type { Instruction } from "./lib.js"
 export type Await<T> = T | PromiseLike<T>
 export declare function wait<T extends unknown>(value: Await<T>): Task<T>
 
@@ -22,18 +25,22 @@ export declare function promise<T>(
 // }
 
 export interface Task<T extends unknown = unknown, M = never, X = Error>
-  extends Generator<Instruction<M>, T, Actor<any, any, any>> {
+  extends Generator<M | Instruction, T, Task<T, M, X> | unknown> {
   throw(error: X): TaskState<T, M>
   return(value: T): TaskState<T, M>
   next(value?: unknown): TaskState<T, M>
 
   fork?: Fork<T, M, X>
+  state?: TaskState<T, M>
+  group?: Group | null
+
+  tag?: string
 }
 
 export type TaskState<
   T extends unknown = unknown,
   M = unknown
-> = IteratorResult<Instruction<M>, T>
+> = IteratorResult<M | Instruction, T>
 
 export interface Send<M> {
   type: "send"
@@ -54,11 +61,7 @@ export interface Suspend {
 }
 
 interface Self {
-  type: "self"
-}
-
-export interface Continue {
-  type: "continue"
+  type: "context"
 }
 
 export interface TaskView {
@@ -67,18 +70,12 @@ export interface TaskView {
   // spawn <T, M, X>(task:Task<T, M, X>):TaskView
 }
 
-export type Instruction<M> = Send<M> | Suspend | Self
-
 export type Status = "idle" | "active"
-
-export type ExecutionState<T, M> =
-  | TaskState<T, M>
-  | { done: true; value: Suspend }
-  | { done: false; value: Continue }
 
 export type Actor<T, M, X> = Main | Fork<T, M, X>
 
 export interface Fork<T, M, X> {
+  state: TaskState<T, M>
   supervisor: Actor<T, M, X>
   status: Status
   stack: Stack<T, M, X>
@@ -89,13 +86,21 @@ export interface Fork<T, M, X> {
   join(): Task<void, M, X>
 }
 
-export interface Main {
-  supervisor?: undefined
-  status: Status
-  stack: Stack<any, any, any>
+export type Group = Main | TaskGroup
+
+export interface TaskGroup {
+  parent: Group
+  driver: Task<void, unknown, never>
+  stack: Stack
 }
 
-export interface Stack<T, M, X> {
+export interface Main {
+  parent?: null
+  status: Status
+  stack: Stack
+}
+
+export interface Stack<T = unknown, M = unknown, X = unknown> {
   active: Task<T, M, X>[]
   idle: Set<Task<T, M, X>>
 }

@@ -32,14 +32,17 @@ describe("wait", () => {
     })
   })
 
-  it("does throw on yield", async () => {
-    // @ts-expect-error - not a valid task
+  it("lets you yield", async () => {
     const result = await inspect(function* () {
-      yield 5
+      const value = yield 5
+      assert.equal(value, undefined, "return undefined on normal yield")
     })
 
-    assert.deepEqual(result.ok, false)
-    assert.match(result.error.toString(), /Unknown instruction/g)
+    assert.deepEqual(result, {
+      value: undefined,
+      ok: true,
+      mail: [5],
+    })
   })
 
   it("does throw on failed promise", async () => {
@@ -336,7 +339,7 @@ describe("subtasks", () => {
   })
 })
 
-describe("concurrency", () => {
+describe.skip("concurrency", () => {
   it("can run tasks concurrently", async () => {
     /**
      * @param {string} name
@@ -384,117 +387,122 @@ describe("concurrency", () => {
   })
 
   it("can dot this", async () => {
-    const log = ["Start"]
+    const output = ["Start"]
+    const log = msg => {
+      console.log(msg)
+      output.push(msg)
+    }
     /**
      * @param {string} name
      */
     function* worker(name) {
-      log.push(`> ${name} sleep`)
-      yield* Task.sleep(100)
-      log.push(`< ${name} wake`)
+      log(`> ${name} sleep`)
+      yield* Task.sleep(5, "👷")
+      log(`< ${name} wake`)
     }
 
     function* actor() {
-      log.push("Spawn A")
-      yield* Task.spawn(worker("A"))
+      log("Spawn A")
+      const a = Object.assign(
+        yield* Task.spawn(Object.assign(worker("A"), { tag: "Worker A" })),
+        { tag: "Actor A" }
+      )
+      console.log(a)
 
-      log.push("Sleep")
-      yield* Task.sleep(800)
+      log("Sleep")
+      yield* Task.sleep(10, "🤖")
 
-      log.push("Spawn B")
-      yield* Task.spawn(worker("B"))
+      log("Spawn B")
+      const b = Object.assign(
+        yield* Task.spawn(Object.assign(worker("B"), { tag: "Worker B" })),
+        { tag: "Actor B" }
+      )
 
-      log.push("Join")
-      yield* Task.join()
+      console.log(b)
 
-      log.push("Nap")
-      yield* Task.sleep(0)
+      log("Join")
+      yield* Task.join(b)
 
-      log.push("Exit")
+      log("Nap")
+      // yield* Task.sleep(110)
+
+      log("Exit")
     }
 
-    const result = await Task.promise(actor())
+    await Task.promise(actor())
 
-    assert.deepEqual(log, [
-      "Start",
-      "Spawn A",
-      "Sleep",
-      "> A sleep",
-      "< A wake",
-      "Spawn B",
-      "Join",
-      "> B sleep",
-      "< B wake",
-      "Nap",
-      "Exit",
-    ])
+    assert.deepEqual(
+      [...output],
+      [
+        "Start",
+        "Spawn A",
+        "Sleep",
+        "> A sleep",
+        "< A wake",
+        "Spawn B",
+        "Join",
+        "> B sleep",
+        "< B wake",
+        "Nap",
+        "Exit",
+      ]
+    )
   })
 })
 
 /**
  * @template T, M, X
  * @param {() => Task.Task<T, M, X>} activate
- * @returns {Task.Await<{ ok: boolean, value?: T, error?: X, mail: M[] }>}
  */
-const inspect = activate => {
-  /**
-   * @returns {Task.Task<{ ok: boolean, value?: T, error?: X, mail: M[] }, M, X>}
-   */
-  const inspector = function* () {
-    /** @type {M[]} */
-    const mail = []
-    const task = activate()
-    let input
-    try {
-      while (true) {
-        const step = task.next(input)
-        if (step.done) {
-          return { ok: true, value: step.value, mail }
-        } else {
-          const instruction = step.value
-          switch (instruction.type) {
-            case "send":
-              mail.push(instruction.message)
-              input = yield instruction
-              break
-            case "self":
-            case "suspend":
-              input = yield instruction
-              break
-            default:
-              input = yield instruction
-              break
-            // throw new Error(`Can not interpret ${JSON.stringify(input)}`)
-          }
+const inspect = activate => Task.promise(inspector(activate()))
+
+// /** @type {M[]} */
+// const mail = []
+// return Task.execute(activate(), {
+//   send (message) {
+//     mail.push(message)
+//   },
+//   throw (error) {
+//     return { ok: false, error, mail }
+//   },
+//   return (value) {
+//     return { ok: true, value, mail }
+//   },
+
+//   /**
+//    * @param input
+//    * @returns {never}
+//    */
+//   interpret (input) {
+//     throw new Error(`Can not interpret ${JSON.stringify(input)}`)
+//   }
+// })
+
+/**
+ * @template T, M, X
+ * @param {Task.Task<T, M, X>} task
+ * @returns {Task.Task<{ ok: boolean, value?: T, error?: X, mail: M[] }, M, X>}
+ */
+const inspector = function* (task) {
+  /** @type {M[]} */
+  const mail = []
+  let input
+  try {
+    while (true) {
+      const step = task.next(input)
+      if (step.done) {
+        return { ok: true, value: step.value, mail }
+      } else {
+        const instruction = step.value
+        if (typeof step.value != "symbol") {
+          mail.push(step.value)
         }
+        input = yield instruction
       }
-    } catch (error) {
-      return { ok: false, error: /** @type {X} */ (error), mail }
     }
+  } catch (error) {
+    return { ok: false, error: /** @type {X} */ (error), mail }
   }
-  return Task.promise(inspector())
-
-  // /** @type {M[]} */
-  // const mail = []
-  // return Task.execute(activate(), {
-  //   send (message) {
-  //     mail.push(message)
-  //   },
-  //   throw (error) {
-  //     return { ok: false, error, mail }
-  //   },
-  //   return (value) {
-  //     return { ok: true, value, mail }
-  //   },
-
-  //   /**
-  //    * @param input
-  //    * @returns {never}
-  //    */
-  //   interpret (input) {
-  //     throw new Error(`Can not interpret ${JSON.stringify(input)}`)
-  //   }
-  // })
 }
 // describe('continuation', () => {
 //   it('can raise errors', () => {
