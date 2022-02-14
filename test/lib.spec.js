@@ -664,6 +664,50 @@ describe("can abort", () => {
     assert.deepEqual(output, [...expect, "ok bye"])
   })
 
+  it("can still suspend after aborted", async () => {
+    let { output, log } = createLog()
+    function* main() {
+      log("fork worker")
+      const fork = yield* Task.fork(worker())
+      log("nap")
+      yield* Task.sleep(1)
+      log("abort worker")
+      yield* Task.abort(fork, new Error("kill"))
+      log("exit main")
+    }
+
+    function* worker() {
+      const task = yield* Task.current()
+      try {
+        log("start worker")
+        yield* Task.sleep(20)
+        log("wake worker")
+      } catch (error) {
+        log(`aborted ${error}`)
+        setTimeout(Task.resume, 2, task)
+        log("suspend after abort")
+        yield* Task.suspend()
+        log("ok bye now")
+      }
+    }
+
+    const expect = [
+      "fork worker",
+      "nap",
+      "start worker",
+      "abort worker",
+      "aborted Error: kill",
+      "suspend after abort",
+      "exit main",
+    ]
+
+    await Task.promise(main())
+    assert.deepEqual(output, expect)
+    await Task.promise(Task.sleep(10))
+
+    assert.deepEqual(output, [...expect, "ok bye now"])
+  })
+
   it("can exit the task", async () => {
     let { output, log } = createLog()
     function* main() {
@@ -810,6 +854,59 @@ describe("tag", () => {
     assert.deepEqual(output, ["send 1"])
   })
 })
+
+describe("listen", () => {
+  it("can listen to several fx", async () => {
+    /**
+     * @param {number} delay
+     * @param {number} count
+     */
+    function* source(delay, count) {
+      let start = Date.now()
+      let n = 0
+      while (n < count) {
+        yield* Task.send(n)
+        n++
+        yield* Task.sleep(delay)
+      }
+    }
+
+    const fx = Task.listen({
+      beep: source(3, 5),
+      bop: source(5, 3),
+      buz: source(2, 2),
+    })
+
+    const { mail, ...result } = await inspect(fx)
+    assert.deepEqual(result, { ok: true, value: undefined })
+    const inbox = mail.map(m => JSON.stringify(m))
+
+    const expect = [
+      { type: "beep", beep: 0 },
+      { type: "beep", beep: 1 },
+      { type: "beep", beep: 2 },
+      { type: "beep", beep: 3 },
+      { type: "beep", beep: 4 },
+      { type: "bop", bop: 0 },
+      { type: "bop", bop: 1 },
+      { type: "bop", bop: 2 },
+      { type: "buz", buz: 0 },
+      { type: "buz", buz: 1 },
+    ]
+
+    assert.notDeepEqual(
+      [...inbox].sort(),
+      inbox,
+      "messages aren not ordered by actors"
+    )
+    assert.deepEqual(
+      [...inbox].sort(),
+      [...expect.map(v => JSON.stringify(v))].sort(),
+      "all messages were received"
+    )
+  })
+})
+
 /**
  * @template T, X, M
  * @param {Task.Actor<T, X, M>} task

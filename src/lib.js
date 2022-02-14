@@ -83,10 +83,8 @@ export const suspend = function* () {
  */
 export function* sleep(duration) {
   const task = yield* current()
+  const id = setTimeout(enqueue, duration, task)
 
-  const id = setTimeout(function () {
-    enqueue(task)
-  }, duration)
   try {
     yield* suspend()
   } finally {
@@ -208,15 +206,15 @@ export const send = function* (message) {
  */
 export const listen = function* (source) {
   /** @type {Task.Effect<Tagged<Tag, T>>[]} */
-  const effects = []
+  const tasks = []
   for (const entry of Object.entries(source)) {
     const [name, effect] = /** @type {[Tag, Task.Effect<T>]} */ (entry)
 
-    const task = yield* Task.spawn(tag(effect, name))
-    effects.push(task)
+    const task = yield* Task.fork(tag(effect, name))
+    tasks.push(task)
   }
 
-  yield* Task.join(...effects)
+  yield* Task.join(...tasks)
 }
 
 /**
@@ -519,8 +517,8 @@ export const enqueue = task => {
       idle.delete(group.driver)
       active.push(group.driver)
     } else {
-      /* c8 ignore next 4 */
-      console.warn("group driver is not idle", Task.id(group.driver))
+      /* c8 ignore next 5 */
+      console.warn("group driver is not idle", group.driver)
       // if driver was not blocked it must have been unblocked by
       // other task so stop there.
       break
@@ -548,15 +546,6 @@ export const enqueue = task => {
 }
 
 export const resume = enqueue
-
-/**
- * @template T, M, X
- * @param {Task.Actor<T, X, M>} task
- */
-export const id = task =>
-  `${task.withTag || ""}:${task.id || (task.id = ++ID)}@${
-    task.group ? task.group.id : "main"
-  }`
 
 /**
  * @template X, M
