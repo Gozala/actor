@@ -1,108 +1,119 @@
 export * from "./lib.js"
 
-import type { Instruction } from "./lib.js"
+import type { Control } from "./lib.js"
+
+export type Instruction<T> = Message<T> | Control
+
 export type Await<T> = T | PromiseLike<T>
-export declare function wait<T extends unknown>(value: Await<T>): Task<T>
 
-export declare function perform<T, M>(
-  effect: Task<T>,
-  message: (data: T) => M
-): Effect<M>
+type CompileError<Reason extends string> = `🚨 ${Reason}`
 
-export declare function subscribe<T, M>(
-  task: Task<void, T>,
-  message: (data: T) => M
-): Effect<M>
+export type Message2<T> = Exclude<T, Generator>
+/**
+ * Helper type to guard users against easy to make mistakes.
+ */
+export type Message<T> = T extends Generator
+  ? CompileError<`You must 'yield * fn()' to delegate task instead of 'yield fn()' which yields generator instead`>
+  : T extends (...args: any) => Generator
+  ? CompileError<`You must yield invoked generator as in 'yield * fn()' instead of yielding generator function`>
+  : T
 
-export declare function promise<T>(
-  task: Generator<Promise<unknown>, T, unknown>
-): Await<T>
+/**
+ * An actor is a unit of computation that runs concurrently, a light-weight
+ * process (in Erlang terms). You can use spawn bunch of them and provided
+ * cooperative scheduler will interleave their execution.
+ *
+ * Actors have three type variables first two describing result of the
+ * computation `Success` that corresponds to return type and `Failure`
+ * describing an error type (caused by thrown exceptions). Third type
+ * varibale `Message` describes type of messages this actor may produce.
+ *
+ * Please note that that TS does not really check exceptions so `Failure`
+ * type can not be guaranteed. Yet, we find them more practical that omitting
+ * them as TS dose for `Promise` types.
+ *
+ * Our actors are generators (not the generator functions, but what you get
+ * invoking them) that are executed by (library provided) provided scheduler.
+ * Scheduler recognizes two special `Control` instructions yield by generator.
+ * When scheduler gets `context` instruction it will resume generator with
+ * a handle that can be used to resume running generator after it is suspended.
+ * When `suspend` instruction is received scheduler will suspend execution until
+ * it is resumed by queueing it from the outside event.
+ */
+export interface Actor<
+  Success extends unknown = unknown,
+  Failure = Error,
+  Message extends unknown = unknown
+> extends Generator<
+    Instruction<Message>,
+    Success,
+    Actor<Success, Failure, Message> | unknown
+  > {
+  throw(error: Failure): ActorState<Success, Message>
+  return(value: Success): ActorState<Success, Message>
+  next(
+    value: Actor<Success, Failure, Message> | unknown
+  ): ActorState<Success, Message>
 
-// export declare function fork <T> (task: Task<T, never>):Task<Fork<T>>
-
-// export interface Fork<T> {
-//   result: Await<T>
-// }
-
-export interface Task<T extends unknown = unknown, M = never, X = Error>
-  extends Generator<M | Instruction, T, Task<T, M, X> | unknown> {
-  throw(error: X): TaskState<T, M>
-  return(value: T): TaskState<T, M>
-  next(value?: unknown): TaskState<T, M>
-
-  fork?: Fork<T, M, X>
-  state?: TaskState<T, M>
-  group?: TaskGroup<M, X>
+  group?: TaskGroup<Failure, Message>
 
   tag?: string
   id?: number
 }
 
-export type TaskState<
+export type ActorState<
   T extends unknown = unknown,
   M = unknown
-> = IteratorResult<M | Instruction, T>
+> = IteratorResult<Instruction<M>, T>
 
-export interface Send<M> {
-  type: "send"
-  message: M
-}
+/**
+ * Task represents potentially asynchronous operation that may fail, like an
+ * HTTP request or DB write. It is like `Promise`, however unlike promise it
+ * not a result of an in-flight operation. It is an operation which you can
+ * execute, in which case it will either succeed or fail. You can also think
+ * of them like lazy promises, they will not do anything until you ask them to.
+ *
+ * As you may notice `Task` is an `Actor` that never sends a `Message`.
+ */
+export interface Task<Success, Failure>
+  extends Actor<Success, Failure, never> {}
 
-export declare function send<M>(message: M): Task<void, M>
-
-export interface Wait {
-  type: "wait"
-  promise: PromiseLike<unknown>
-}
-
-export interface Effect<T> extends Task<void, T> {}
-
-export interface Suspend {
-  type: "suspend"
-}
-
-interface Self {
-  type: "context"
-}
-
-export interface TaskView {
-  resume(): void
-
-  // spawn <T, M, X>(task:Task<T, M, X>):TaskView
-}
+/**
+ * Effect represents potentially asynchronous operation that results in a set
+ * of events. It is often comprised of multiple `Task` and represents either
+ * chain of events or a concurrent set of events (stretched over time).
+ * `Effect` campares to a `Stream` the same way as `Task` compares to `Promise`.
+ * It is not representation of an eventual result, but rather representation of
+ * an operation which if execute will produce certain result. `Effect` can also
+ * be compared to an `EventEmitter`, because very often their `Event` type
+ * variable is a union of various event types, unlike `EventEmitter`s however
+ * `Effect`s have inherent finality to them an in that regard they are more like
+ * `Stream`s.
+ *
+ * You may notice that `Effect`, just like `Task` is an `Actor`, but in this
+ * case it is a one that never fails, nor has (meaningful) result instead, but
+ * can produce events (send messages).
+ */
+export interface Effect<Event> extends Actor<void, never, Event> {}
 
 export type Status = "idle" | "active"
 
-export type Actor<T, M, X> = Main | Fork<T, M, X>
+export type Group<X, M> = Main<X, M> | TaskGroup<X, M>
 
-export interface Fork<T, M, X> {
-  state: TaskState<T, M>
-  supervisor: Actor<T, M, X>
-  status: Status
-  stack: Stack<T, M, X>
-  task: Task<T, M, X>
-
-  resume(): void
-  fork(task: Task<void, M, X>): Task<void, never, never>
-  join(): Task<void, M, X>
-}
-
-export type Group<M, X> = Main<M, X> | TaskGroup<M, X>
-
-export interface TaskGroup<M, X> {
+export interface TaskGroup<X, M> {
   id: number
-  parent: Group<M, X>
-  driver: Task<unknown, M, X>
-  stack: Stack<unknown, M, X>
+  parent: Group<X, M>
+  driver: Actor<unknown, X, M>
+  stack: Stack<unknown, X, M>
 }
 
-export interface Main<M, X> {
+export interface Main<X, M> {
   parent?: null
   status: Status
-  stack: Stack<unknown, M, X>
+  stack: Stack<unknown, X, M>
 }
 
-export interface Stack<T = unknown, M = unknown, X = unknown> {
-  active: Task<T, M, X>[]
-  idle: Set<Task<T, M, X>>
+export interface Stack<T = unknown, X = unknown, M = unknown> {
+  active: Actor<T, X, M>[]
+  idle: Set<Actor<T, X, M>>
 }

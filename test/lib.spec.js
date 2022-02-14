@@ -339,7 +339,7 @@ describe("subtasks", () => {
   })
 })
 
-describe.only("concurrency", () => {
+describe("concurrency", () => {
   it("can run tasks concurrently", async () => {
     /**
      * @param {string} name
@@ -387,12 +387,7 @@ describe.only("concurrency", () => {
   })
 
   it("can fork and join", async () => {
-    const output = ["Start"]
-    /** @param {string} msg */
-    const log = msg => {
-      // console.log(msg)
-      output.push(msg)
-    }
+    const { output, log } = createLog()
     /**
      * @param {string} name
      */
@@ -428,7 +423,6 @@ describe.only("concurrency", () => {
     assert.deepEqual(
       [...output],
       [
-        "Start",
         "Spawn A",
         "Sleep",
         "> A sleep",
@@ -442,11 +436,62 @@ describe.only("concurrency", () => {
       ]
     )
   })
+
+  it("forks can outlive parent", async () => {
+    const { output, log } = createLog()
+    const fork = function* () {
+      log("start fork")
+      yield* Task.sleep(2)
+      log("exit fork")
+    }
+
+    const main = function* () {
+      log("start main")
+      yield* Task.spawn(fork())
+      log("exit main")
+    }
+
+    await Task.promise(main())
+    assert.deepEqual(output, ["start main", "exit main", "start fork"])
+
+    await Task.promise(Task.sleep(20))
+
+    assert.deepEqual(output, [
+      "start main",
+      "exit main",
+      "start fork",
+      "exit fork",
+    ])
+  })
 })
 
+describe("type level errors", async () => {
+  it("must yield* not yield", async () => {
+    const main = function* () {
+      yield Task.sleep(2)
+    }
+
+    const error = () => {
+      // @ts-expect-error - Tells you to use yield*
+      Task.execute(main())
+    }
+  })
+
+  it("must yield* not yield", async () => {
+    const child = function* () {}
+    const main = function* () {
+      // @ts-expect-error tels you to use child()
+      yield Task.spawn(child)
+    }
+  })
+})
+
+describe("can abort", async () => {
+  it("can abort sleeping task", () => {})
+})
 /**
  * @template T, M, X
- * @param {() => Task.Task<T, M, X>} activate
+ * @param {() => Task.Actor<T, M, X>} activate
  */
 const inspect = activate => Task.promise(inspector(activate()))
 
@@ -474,8 +519,8 @@ const inspect = activate => Task.promise(inspector(activate()))
 
 /**
  * @template T, M, X
- * @param {Task.Task<T, M, X>} task
- * @returns {Task.Task<{ ok: boolean, value?: T, error?: X, mail: M[] }, M, X>}
+ * @param {Task.Actor<T, M, X>} task
+ * @returns {Task.Actor<{ ok: boolean, value?: T, error?: X, mail: M[] }, M, X>}
  */
 const inspector = function* (task) {
   /** @type {M[]} */
@@ -496,6 +541,20 @@ const inspector = function* (task) {
     }
   } catch (error) {
     return { ok: false, error: /** @type {X} */ (error), mail }
+  }
+}
+
+const createLog = () => {
+  /** @type {string[]} */
+  const output = []
+  return {
+    output,
+    /**
+     * @param {string} message
+     */
+    log(message) {
+      output.push(message)
+    },
   }
 }
 // describe('continuation', () => {

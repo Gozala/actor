@@ -3,42 +3,86 @@ import * as Task from "./type.js"
 export * from "./type.js"
 
 /**
- * @template {string} Tag
+ * Turns a task (that never fails) into an effect of it's success result.
+ *
  * @template T
- * @param {{ [K in Tag]: Task.Task<T, void> }} source
- * @returns {Task.Effect<Tagged<Tag, T>>}
+ * @param {Task.Task<T, never>} task
+ * @returns {Task.Effect<T>}
  */
-export const perform = function* (source) {
-  const [tag, task] =
-    /** @type {[Tag, Task.Task<T>]} */
-    (Object.entries(source)[0])
-
+export const perform = function* (task) {
   const message = yield* task
-  yield* send(withTag(tag, message))
+  yield* send(message)
 }
 
 /**
- * @returns {Task.Task<void, never, never>}
+ * Gets a handle to the actor that invokes it. Useful when actor needs to
+ * suspend execution until some outside event occurs, in which case handle
+ * can be used resume execution (see `suspend` code example for more details)
+ *
+ * @template T, M, X
+ * @returns {Task.Task<Task.Actor<T, X, M>, never>}
+ */
+export function* current() {
+  return /** @type {Task.Actor<T, X, M>} */ (yield CONTEXT)
+}
+
+/**
+ * Suspends the current actor (actor that invokes it),  which can then be
+ * resumed from another actor or an outside event (e.g. `setTimeout` callback)
+ * by calling the `resume` with an actor's handle.
+ *
+ * Calling this in almost all cases is preceeded by call to `current()` in
+ * order to obtain a `handle` which can be passed to `resume` function
+ * to resume the execution.
+ *
+ * Note: This task never fails, although it may never resume either. However
+ * you can utilize `finally` block to do a necessary cleanup in case execution
+ * is aborted.
+ *
+ * @example
+ * ```js
+ * import { context, suspend, resume } from "actor"
+ * function * sleep(duration) {
+ *    // get a reference to this task so we can resume it.
+ *    const self = yield * context()
+ *    // resume this task when timeout fires
+ *    const id = setTimeout(() => resume(self), duration)
+ *    try {
+ *      // suspend this task nothing below this line will run until task is
+ *      // resumed.
+ *      yield * suspend()
+ *    } finally {
+ *      // if task is aborted finally block will still run which given you
+ *      // chance to cleanup.
+ *      clearTimeout(id)
+ *    }
+ * }
+ * ```
+ *
+ * @returns {Task.Task<void, never>}
  */
 export const suspend = function* () {
   yield SUSPEND
 }
 
 /**
- * @template T, M, X
- * @returns {Task.Task<Task.Task<T, M, X>, never, never>}
- */
-export function* context() {
-  return /** @type {Task.Task<T, M, X>} */ (yield CONTEXT)
-}
-
-/**
+ * Suspends execution for the given duration in milliseconds, after which
+ * execution is resumed (unless it was aborted in the meantime).
+ *
+ * @example
+ * ```js
+ * function * demo() {
+ *    console.log("I'm going to take small nap")
+ *    yield * sleep(200)
+ *    console.log("I am back to work")
+ * }
+ * ```
+ *
  * @param {number} duration
- * @returns {Task.Task<void, never, never>}
+ * @returns {Task.Task<void, never>}
  */
-export function* sleep(duration, tag = "🥸") {
-  const task = yield* context()
-  task.tag = tag
+export function* sleep(duration) {
+  const task = yield* current()
 
   const id = setTimeout(function () {
     enqueue(task)
@@ -50,24 +94,41 @@ export function* sleep(duration, tag = "🥸") {
   }
 }
 
-// /**
-//  * @template T, M, X
-//  * @returns {Task.Task<Task.Fork<T, M, X>}
-//  */
-// export function* self() {
-//   return /** @type {Task.Fork<T, M, X>} */ (yield { type: "self" })
-// }
-
 /**
+ * Provides equivalent of `await` in async functions. Specifically it takes
+ * a value that you can `await` on (that is `Promise<T>|T`) and suspends
+ * execution until promise is settled. If promise succeeds execution is resumed
+ * with `T` otherwise an error of type `X` is thrown (which is by default
+ * `unknown` since promises do not encode error type).
+ *
+ * It is useful when you need to deal with potentially async set of operations
+ * without having to check if thing is a promise at every step.
+ *
+ * Please note: This that execution is suspended even if given value is not a
+ * promise, however scheduler will still resume it in the same tick of the event
+ * loop after, just processing other scheduled tasks. This avoids problematic
+ * race condititions that can otherwise occur when values are sometimes promises
+ * and other times are not.
+ *
+ * @example
+ * ```js
+ * function * fetchJSON (url, options) {
+ *    const response = yield * wait(fetch(url, options))
+ *    const json = yield * wait(response.json())
+ *    return json
+ * }
+ * ```
+ *
  * @template T, [X=unknown]
  * @param {Task.Await<T>} input
- * @returns {Task.Task<T, never, X>}
+ * @returns {Task.Task<T, X>}
  */
 export const wait = function* (input) {
+  const task = yield* current()
   if (isAsync(input)) {
-    const task = yield* context()
     let failed = false
-    let output
+    /** @type {unknown} */
+    let output = undefined
     input.then(
       value => {
         failed = false
@@ -85,15 +146,23 @@ export const wait = function* (input) {
     if (failed) {
       throw output
     } else {
-      // @ts-ignore
-      return output
+      return /** @type {T} */ (output)
     }
   } else {
+    // This may seem redundunt but it is not, by enqueuing this task we allow
+    // scheduler to perform other queued tasks first. This way many race
+    // conditions can be avoided when values are sometimes promises and other
+    // times aren't.
+    // Unlike `await` however this will resume in the same tick.
+    enqueue(task)
+    yield* suspend()
     return input
   }
 }
 
 /**
+ * Checks if value value is a promise (or it's lookalike).
+ *
  * @template T
  * @param {any} node
  * @returns {node is PromiseLike<T>}
@@ -104,40 +173,93 @@ const isAsync = node =>
   typeof (/** @type {{then?:unknown}} */ (node).then) === "function"
 
 /**
+ * Task that sends given message (or rather an effect producing this message).
+ * Please note, that while you could use `yield message` instead, but you'd risk
+ * having to deal with potential breaking changes if library internals change
+ * in the future, which in fact may happen as anticipated improvements in
+ * TS generator inference could enable replace need for `yield *`.
+ *
+ * @see https://github.com/microsoft/TypeScript/issues/43632
+ *
  * @template T
  * @param {T} message
  * @returns {Task.Effect<T>}
  */
 export const send = function* (message) {
-  yield message
+  yield /** @type {Task.Message<T>} */ (message)
 }
 
 /**
+ * Takes several effects and merges them into a single effect of tagged
+ * variants so that their source could be identified via `type` field.
+ *
+ * @example
+ * ```js
+ * listen({
+ *    read: perfom(dbRead),
+ *    write: perfrom(dbWrite)
+ * })
+ * ```
+ *
  * @template {string} Tag
  * @template T
  * @param {{ [K in Tag]: Task.Effect<T> }} source
  * @returns {Task.Effect<Tagged<Tag, T>>}
  */
 export const listen = function* (source) {
-  const [tag, task] =
-    /** @type {[Tag, Task.Task<void, T>]} */
-    (Object.entries(source)[0])
+  /** @type {Task.Effect<Tagged<Tag, T>>[]} */
+  const effects = []
+  for (const entry of Object.entries(source)) {
+    const [name, effect] = /** @type {[Tag, Task.Effect<T>]} */ (entry)
 
-  for (const op of task) {
-    switch (op) {
+    const task = yield* Task.spawn(tag(effect, name))
+    effects.push(task)
+  }
+
+  yield* Task.join(...effects)
+}
+
+/**
+ * @template {string} Tag
+ * @template T
+ * @typedef {{type: Tag} & {[K in Tag]: T}} Tagged
+ */
+/**
+ * Tags an effect by boxing each event with an object that has `type` field
+ * corresponding to given tag and same named field holding original message
+ * e.g. given `nums` effect that produces numbers, `tag(nums, "inc")` would
+ * create an effect that produces events like `{type:'inc', inc:1}`.
+ *
+ * @template {string} Tag
+ * @template T
+ * @param {Task.Effect<T>} effect
+ * @param {Tag} tag
+ * @returns {Task.Effect<Tagged<Tag, T>>}
+ */
+export const tag = function* (effect, tag) {
+  for (const instruction of effect) {
+    switch (instruction) {
       case SUSPEND:
       case CONTEXT:
-        yield op
-      default:
-        yield withTag(tag, /** @type {T} */ (op))
+        yield instruction
+      default: {
+        const message = /** @type {Task.Message<T>} */ (instruction)
+        const out = withTag(tag, message)
+
+        yield /** @type {Task.Message<Tagged<Tag, T>>} */ (out)
+      }
     }
   }
 }
 
+function* empty() {}
+
 /**
+ * Returns empty effect, that is effect that produces no messages.
+ *
  * @type {Task.Effect<never>}
  */
-export const nofx = (function* () {})()
+export const nofx = empty()
 
 // /**
 //  * @template T
@@ -178,46 +300,29 @@ export const nofx = (function* () {})()
 //   }
 // }
 
-// /**
-//  * @template {string} Tag
-//  * @template T
-//  * @param {Task.Effect<T>} effect
-//  * @param {Tag} tag
-//  * @returns {Task.Effect<{type: Tag} & {[K in Tag]: T}>}
-//  */
-// export const tag = function* (effect, tag) {
-//   for (const op of effect) {
-//     if (op.type === "send") {
-//       yield { type: "send", message: withTag(tag, op.message) }
-//     }
-//   }
-// }
-
-/**
- * @template {string} Tag
- * @template T
- * @typedef {{type: Tag} & {[K in Tag]: T}} Tagged
- */
-
 /**
  * @template {string} Tag
  * @template T
  * @param {Tag} tag
- * @param {T} value
+ * @param {Task.Message<T>} value
  */
 const withTag = (tag, value) =>
   /** @type {Tagged<Tag, T>} */
   ({ type: tag, [tag]: value })
 
 /**
- * @template T, M, X
- * @param {Task.Task<T, M, X>} task
+ * Executes given actor
+ *
+ * @template T, X, M
+ * @param {Task.Actor<T, X, M>} task
  */
 export const execute = task => enqueue(task)
 
 /**
- * @template T, M, X
- * @param {Task.Task<T, M, X>} task
+ * Executes a task and returns a promise of the result.
+ *
+ * @template T, X
+ * @param {Task.Task<T, X>} task
  * @returns {Promise<T>}
  */
 export const promise = task =>
@@ -227,11 +332,11 @@ export const promise = task =>
  * Kind of like promise.then which is handy when you want to extract result
  * from the given task from the outside.
  *
- * @template T, M, X, U
- * @param {Task.Task<T, M, X>} task
+ * @template T, U, X, M
+ * @param {Task.Actor<T, X, M>} task
  * @param {(value:T) => U} resolve
  * @param {(error:X) => U} reject
- * @returns {Task.Task<U, M, never>}
+ * @returns {Task.Actor<U, never, M>}
  */
 export function* then(task, resolve, reject) {
   try {
@@ -241,23 +346,10 @@ export function* then(task, resolve, reject) {
   }
 }
 
-const SUSPEND = Symbol("suspend")
+// Special control instructions recognized by a scheduler.
 const CONTEXT = Symbol("context")
-/** @typedef {typeof SUSPEND|typeof CONTEXT} Instruction */
-
-/**
- * @template T, M, X
- */
-class Stack {
-  /**
-   * @param {Task.Task<T, M, X>[]} [active]
-   * @param {Set<Task.Task<T, M, X>>} [idle]
-   */
-  constructor(active = [], idle = new Set()) {
-    this.active = active
-    this.idle = idle
-  }
-}
+const SUSPEND = Symbol("suspend")
+/** @typedef {typeof SUSPEND|typeof CONTEXT} Control */
 
 /** @typedef {'idle'|'active'} TaskStatus */
 /** @type {TaskStatus} */
@@ -265,15 +357,15 @@ const IDLE = "idle"
 const ACTIVE = "active"
 
 /**
- * @template M, X
- * @implements {Task.TaskGroup<M, X>}
+ * @template X, M
+ * @implements {Task.TaskGroup<X, M>}
  */
 class Group {
   /**
-   * @param {Task.Task<unknown, M, X>} driver
-   * @param {Task.Task<void, M, X>[]} [active]
-   * @param {Set<Task.Task<void, M, X>>} [idle]
-   * @param {Task.Stack<void, M, X>} [stack]
+   * @param {Task.Actor<unknown, X, M>} driver
+   * @param {Task.Actor<void, X, M>[]} [active]
+   * @param {Set<Task.Actor<void, X, M>>} [idle]
+   * @param {Task.Stack<void, X, M>} [stack]
    */
   constructor(
     driver,
@@ -289,8 +381,8 @@ class Group {
 }
 
 /**
- * @template M, X
- * @implements {Task.Main<M, X>}
+ * @template X, M
+ * @implements {Task.Main<X, M>}
  */
 class Main {
   constructor() {
@@ -299,54 +391,26 @@ class Main {
   }
 }
 
-// /**
-//  * @param {Task.Group} group
-//  * @returns {Task.Task<void, unknown, never>}
-//  */
-// const run = function* (group) {
-//   while (isPending(group)) {
-//     yield* step(group)
-
-//     yield* suspend()
-//   }
-// }
-
-// /**
-//  * @template T, M, X
-//  * @implements {Task.Fork<T, M, X>}
-//  * @implements {Task.TaskView}
-//  */
-// class Fork {
-//   /**
-//    * @param {Task.Actor<void, M, X>} supervisor
-//    * @param {Task.Task<T, M, X>[]} [active]
-//    * @param {Set<Task.Task<T, M, X>>} [idle]
-//    * @param {TaskStatus} [status]
-//    * @param {Task.Stack<T, M, X>} [stack]
-//    */
-//   constructor(
-//     supervisor,
-//     active = [],
-//     idle = new Set(),
-//     status = IDLE,
-//     stack = new Stack(active, idle)
-//   ) {
-//     /** @type {Task.Task<void, M, X>} */
-//     // this.task = Object.assign(run(this), { tag: "Fork.run" })
-//     this.supervisor = supervisor
-//     this.status = status
-//     this.stack = stack
-
-//     /** @type {() => void}  */
-//   }
-// }
+/**
+ * @template T, X, M
+ */
+class Stack {
+  /**
+   * @param {Task.Actor<T, X, M>[]} [active]
+   * @param {Set<Task.Actor<T, X, M>>} [idle]
+   */
+  constructor(active = [], idle = new Set()) {
+    this.active = active
+    this.idle = idle
+  }
+}
 
 /**
  * Task to drive group to completion.
  *
- * @template M, X
- * @param {Task.Group<M, X>} group
- * @returns {Task.Task<void, M, X>}
+ * @template X, M
+ * @param {Task.Group<X, M>} group
+ * @returns {Task.Actor<void, X, M>}
  */
 const drive = function* (group) {
   // Unless group has no work
@@ -366,8 +430,8 @@ const drive = function* (group) {
 const isEmpty = stack => stack.idle.size === 0 && stack.active.length === 0
 
 /**
- * @template T, M, X
- * @param {Task.Task<T, M, X>} task
+ * @template T, X, M
+ * @param {Task.Actor<T, X, M>} task
  */
 export const enqueue = task => {
   // If task is not a member of any group assign it to main group
@@ -400,24 +464,25 @@ export const enqueue = task => {
   }
 }
 
+export const resume = enqueue
+
 /**
  * @template T, M, X
- * @param {Task.Task<T, M, X>} task
+ * @param {Task.Actor<T, X, M>} task
  */
 export const id = task =>
   `${task.tag || ""}:${task.id || (task.id = ++ID)}@${
     task.group ? task.group.id : "main"
   }`
 
-let DEPTH = 0
 /**
- * @template M, X
- * @param {Task.Group<M, X>} context
+ * @template X, M
+ * @param {Task.Group<X, M>} context
  */
 
 const step = function* (context) {
   const { active } = context.stack
-  let task = top(context)
+  let task = active[0]
   while (task) {
     // we never actually set task.state just use it to infer type
     const { group } = task
@@ -456,55 +521,9 @@ const step = function* (context) {
 
     // If task is complete, or got suspended we move to a next task
     active.shift()
-    task = top(context)
+    task = active[0]
   }
 }
-
-/**
- * @template M, X
- * @param {Task.Group<M, X>} group
- */
-
-const top = group => group.stack.active[0]
-
-class AbortError extends Error {
-  get name() {
-    return "AbortError"
-  }
-
-  get [Symbol.toStringTag]() {
-    return "AbortError"
-  }
-}
-
-// /**
-//  * @template T, M, X
-//  * @param {API.Task<T, M, X>} task
-//  * @param {API.Actor<T, M, X>} actor
-//  */
-// const dispatch = (task, actor) => {
-//   while (actor) {
-//     const { idle, active } = actor.stack
-//     if (idle.has(task)) {
-//       idle.delete(task)
-//       active.push(task)
-
-//       if (actor.supervisor) {
-//         task = actor.task
-//         actor = actor.supervisor
-//       } else {
-//         // this means we reached the main thread here so we
-//         // just conusme current batch of messages
-//         // eslint-disable-next-line no-unused-vars
-//         for (const _message of wake(actor)) {
-//         }
-//         return
-//       }
-//     } else {
-//       return
-//     }
-//   }
-// }
 
 // /**
 //  * @template T, M, X
@@ -519,14 +538,14 @@ class AbortError extends Error {
 //   task.throw(new AbortError('Task was aborted'))
 // }
 
-/** @type {Task.Main<unknown, unknown>} */
+/** @type {Task.Main<any, any>} */
 const MAIN = new Main()
 let ID = 0
 
 /**
  * @template T, M, X
- * @param {Task.Task<T, M, X>} task
- * @returns {Task.Task<Task.Task<T, M, X>, M, X>}
+ * @param {Task.Actor<M, T, X>} task
+ * @returns {Task.Task<Task.Actor<M, T, X>, never>}
  */
 
 export function* spawn(task) {
@@ -536,13 +555,13 @@ export function* spawn(task) {
 }
 
 /**
- * @template M, X
- * @param {Task.Task<void, M, X>[]} tasks
- * @returns {Task.Task<void, M, X>}
+ * @template X, M
+ * @param {Task.Actor<void, X, M>[]} tasks
+ * @returns {Task.Actor<void, X, M>}
  */
 export function* join(...tasks) {
-  const self = yield* context()
-  /** @type {Task.TaskGroup<M, X>} */
+  const self = yield* current()
+  /** @type {Task.TaskGroup<X, M>} */
   const group = new Group(self)
 
   for (const task of tasks) {
@@ -552,70 +571,10 @@ export function* join(...tasks) {
   yield* drive(group)
 }
 
-// /**
-//  * @template M, X
-//  * @returns {Task.Task<void, never, X>}
-//  */
-// export function* join(...forks) {
-//   const actor = yield* context()
-//   const active = forks
-//   // const active = forks.filter(isPending)
-//   console.log(">>>>", actor.stack)
-//   if (active.length > 1) {
-//     active.shift()
-//     const actor = yield* context()
-//     // const task = top(actor)
-//     // const join = new Fork(actor)
-//     for (const fork of active) {
-//       yield* fork.task
-//       // fork.task.actor = join
-
-//       // actor.stack.idle.delete(fork.wrapper)
-//       // join.stack.idle.add(fork.task)
-//       //   fork.supervisor.stack.idle.delete(fork.task)
-//       //   fork.supervisor.stack.idle.add(join.task)
-//       //   // fork.task = task
-
-//       //   // fork.supervisor = join
-//       //   join.stack.active.push(fork.task)
-
-//       //   console.log("?", fork)
-//       //   // fork.task.return()
-//       //   // join.stack.active.push(run(fork))
-//     }
-//     // yield* join.task
-//     console.log("joined")
-//     // console.log("<<", join)
-//   } else if (active.length === 1) {
-//     // const actor = yield* context()
-//     // const task = top(actor)
-//     const [fork] = active
-
-//     // const rest = fork.task
-//     // fork.task = task
-
-//     // enqueue(task, actor)
-//     // yield* rest
-//     // if (actor.stack.)
-//     dequeue(fork.task, actor)
-
-//     yield* fork.task
-//   }
-//   // const task = top(actor)
-//   // if (task.fork) {
-//   //   enqueue(task, actor)
-//   //   const rest = task.fork.task
-//   //   task.fork.task = task
-//   //   // parent.fork.task.return()
-//   //   // yield * run(parent.fork)
-//   //   yield* rest
-//   // }
-// }
-
 /**
- * @template M, X
- * @param {Task.Task<void, M, X>} task
- * @param {Group<M, X>} to
+ * @template X, M
+ * @param {Task.Actor<void, X, M>} task
+ * @param {Task.TaskGroup<X, M>} to
  */
 const move = (task, to) => {
   const from = task.group || MAIN
