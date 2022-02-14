@@ -393,7 +393,7 @@ describe("concurrency", () => {
      */
     function* worker(name) {
       log(`> ${name} sleep`)
-      yield* Task.sleep(5, "👷")
+      yield* Task.sleep(5)
       log(`< ${name} wake`)
     }
 
@@ -402,7 +402,7 @@ describe("concurrency", () => {
       const a = yield* Task.spawn(worker("A"))
 
       log("Sleep")
-      yield* Task.sleep(20, "🤖")
+      yield* Task.sleep(20)
 
       log("Spawn B")
       const b = yield* Task.spawn(worker("B"))
@@ -490,8 +490,8 @@ describe("can abort", async () => {
   it("can abort sleeping task", () => {})
 })
 /**
- * @template T, M, X
- * @param {() => Task.Actor<T, M, X>} activate
+ * @template T, X, M
+ * @param {() => Task.Actor<T, X, M>} activate
  */
 const inspect = activate => Task.promise(inspector(activate()))
 
@@ -518,9 +518,9 @@ const inspect = activate => Task.promise(inspector(activate()))
 // })
 
 /**
- * @template T, M, X
- * @param {Task.Actor<T, M, X>} task
- * @returns {Task.Actor<{ ok: boolean, value?: T, error?: X, mail: M[] }, M, X>}
+ * @template T, X, M
+ * @param {Task.Actor<T, X, M>} task
+ * @returns {Task.Task<{ ok: boolean, value?: T, error?: X, mail: M[] }, never>}
  */
 const inspector = function* (task) {
   /** @type {M[]} */
@@ -533,10 +533,11 @@ const inspector = function* (task) {
         return { ok: true, value: step.value, mail }
       } else {
         const instruction = step.value
-        if (typeof step.value != "symbol") {
-          mail.push(step.value)
+        if (Task.isInstruction(instruction)) {
+          input = yield instruction
+        } else {
+          mail.push(/** @type {M} */ (instruction))
         }
-        input = yield instruction
       }
     }
   } catch (error) {

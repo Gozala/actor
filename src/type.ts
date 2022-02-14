@@ -62,9 +62,9 @@ export interface Actor<
 }
 
 export type ActorState<
-  T extends unknown = unknown,
-  M = unknown
-> = IteratorResult<Instruction<M>, T>
+  Success extends unknown = unknown,
+  Message = unknown
+> = IteratorResult<Instruction<Message>, Success>
 
 /**
  * Task represents potentially asynchronous operation that may fail, like an

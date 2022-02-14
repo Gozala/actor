@@ -351,6 +351,20 @@ const CONTEXT = Symbol("context")
 const SUSPEND = Symbol("suspend")
 /** @typedef {typeof SUSPEND|typeof CONTEXT} Control */
 
+/**
+ * @param {unknown} value
+ * @returns {value is Task.Control}
+ */
+export const isInstruction = value => {
+  switch (value) {
+    case SUSPEND:
+    case CONTEXT:
+      return true
+    default:
+      return false
+  }
+}
+
 /** @typedef {'idle'|'active'} TaskStatus */
 /** @type {TaskStatus} */
 const IDLE = "idle"
