@@ -231,24 +231,82 @@ export const listen = function* (source) {
  * create an effect that produces events like `{type:'inc', inc:1}`.
  *
  * @template {string} Tag
- * @template T
- * @param {Task.Effect<T>} effect
+ * @template T, M, X
+ * @param {Task.Actor<T, X, M>} effect
  * @param {Tag} tag
- * @returns {Task.Effect<Tagged<Tag, T>>}
+ * @returns {Task.Actor<T, X, Tagged<Tag, M>>}
  */
-export const tag = function* (effect, tag) {
-  for (const instruction of effect) {
-    switch (instruction) {
-      case SUSPEND:
-      case CONTEXT:
-        yield instruction
-      default: {
-        const message = /** @type {Task.Message<T>} */ (instruction)
-        const out = withTag(tag, message)
+export const tag = (effect, tag) =>
+  effect instanceof Tagger
+    ? new Tagger([...effect.tags, tag], effect.source)
+    : new Tagger([tag], effect)
 
-        yield /** @type {Task.Message<Tagged<Tag, T>>} */ (out)
+/**
+ * @template {string} Tag
+ * @template Success, Failure, Message
+ *
+ * @implements {Task.Actor<Success, Failure, Tagged<Tag, Message>>}
+ */
+class Tagger {
+  /**
+   * @param {Task.Actor<Success, Failure, Message>} source
+   * @param {string[]} tags
+   */
+  constructor(tags, source) {
+    this.tags = tags
+    this.source = source
+  }
+  /* c8 ignore next 3 */
+  [Symbol.iterator]() {
+    return this
+  }
+  /**
+   * @param {Task.ActorState<Success, Message>} state
+   * @returns {Task.ActorState<Success, Tagged<Tag, Message>>}
+   */
+  box(state) {
+    if (state.done) {
+      return state
+    } else {
+      switch (state.value) {
+        case SUSPEND:
+        case CONTEXT:
+          return /** @type {Task.ActorState<Success, Tagged<Tag, Message>>} */ (
+            state
+          )
+        default: {
+          // Instead of boxing result at each transform step we perform in-place
+          // mutation as we know nothing else is accessing this value.
+          const tagged = /** @type {{ done: false, value: any }} */ (state)
+          let { value } = tagged
+          for (const tag of this.tags) {
+            value = withTag(tag, value)
+          }
+          tagged.value = value
+          return tagged
+        }
       }
     }
+  }
+  /**
+   *
+   * @param {Task.Instruction<Message>} instruction
+   */
+  next(instruction) {
+    return this.box(this.source.next(instruction))
+  }
+  /**
+   *
+   * @param {Failure} error
+   */
+  throw(error) {
+    return this.box(this.source.throw(error))
+  }
+  /**
+   * @param {Success} value
+   */
+  return(value) {
+    return this.box(this.source.return(value))
   }
 }
 
@@ -402,6 +460,7 @@ class Main {
   constructor() {
     this.status = IDLE
     this.stack = new Stack()
+    this.id = /** @type {0} */ (0)
   }
 }
 
@@ -449,7 +508,7 @@ const isEmpty = stack => stack.idle.size === 0 && stack.active.length === 0
  */
 export const enqueue = task => {
   // If task is not a member of any group assign it to main group
-  let group = task.group || MAIN
+  let group = task.group || (task.group = MAIN)
   group.stack.active.push(task)
   group.stack.idle.delete(task)
 
@@ -460,7 +519,8 @@ export const enqueue = task => {
       idle.delete(group.driver)
       active.push(group.driver)
     } else {
-      console.error("group driver is not idle", Task.id(group.driver))
+      /* c8 ignore next 4 */
+      console.warn("group driver is not idle", Task.id(group.driver))
       // if driver was not blocked it must have been unblocked by
       // other task so stop there.
       break
@@ -471,10 +531,19 @@ export const enqueue = task => {
 
   if (MAIN.status === IDLE) {
     MAIN.status = ACTIVE
-    for (const message of step(MAIN)) {
+    try {
+      for (const message of step(MAIN)) {
+      }
+      MAIN.status = IDLE
+    } catch (error) {
+      // Erroring task may throw another error while it is being resumed to
+      // the error. We catch that error here so we could set the status of
+      // the main back to `IDLE`. We still throw that error so that it can
+      // be surfaced as uncaught exception. Note we use catch as opposed to
+      // finally because later isn't as optimized in some JS engines.
+      MAIN.status = IDLE
+      throw error
     }
-
-    MAIN.status = IDLE
   }
 }
 
@@ -485,7 +554,7 @@ export const resume = enqueue
  * @param {Task.Actor<T, X, M>} task
  */
 export const id = task =>
-  `${task.tag || ""}:${task.id || (task.id = ++ID)}@${
+  `${task.withTag || ""}:${task.id || (task.id = ++ID)}@${
     task.group ? task.group.id : "main"
   }`
 
@@ -500,7 +569,8 @@ const step = function* (context) {
   while (task) {
     // we never actually set task.state just use it to infer type
     const { group } = task
-    let state = task.next(task)
+    /** @type {Task.ActorState<unknown, M>} */
+    let state = { done: false, value: CONTEXT }
     // Keep processing insturctions until task is done, it send suspend request
     // or it's group changed.
     // ⚠️ Group changes require extra care so please make sure to understand
@@ -554,6 +624,8 @@ const step = function* (context) {
 
 /** @type {Task.Main<any, any>} */
 const MAIN = new Main()
+/** @type {Task.Group<any, any>} */
+const ABORTED = Object.assign(Object.create(Group.prototype), { id: -1 })
 let ID = 0
 
 /**
@@ -566,6 +638,68 @@ export function* spawn(task) {
   enqueue(task)
 
   return task
+}
+
+/**
+ * @template T, M, X
+ * @param {Task.Actor<M, T, X>} task
+ * @returns {Task.Task<Task.Actor<M, T, X>, never>}
+ */
+export function* fork(task) {
+  enqueue(task)
+  return task
+}
+
+/**
+ * Abort the given task succesfully with a given value.
+ *
+ * @template T, M, X
+ * @param  {Task.Actor<T, M, X>} task
+ * @param {T} value
+ * @returns {Task.Task<void, never>}
+ */
+export const exit = (task, value) => conclude(task, { ok: true, value })
+
+/**
+ * Abort execution of the given actor / task / effect.
+ *
+ * @template M, X
+ * @param {Task.Actor<void, X, M>} task
+ */
+export const terminate = task => conclude(task, { ok: true, value: undefined })
+
+/**
+ * Aborts given task with an given error.
+ *
+ * @template T, M, X
+ * @param {Task.Actor<T, X, M>} task
+ * @param {X} [error]
+ */
+export const abort = (task, error) => conclude(task, { ok: false, error })
+
+/**
+ * Aborts given task with an given error.
+ *
+ * @template T, M, X
+ * @param {Task.Actor<T, X, M>} task
+ * @param {{ok:true, value:T}|{ok:false, error:X}} result
+ * @returns {Task.Task<void, never>}
+ */
+function* conclude(task, result) {
+  try {
+    const state = result.ok
+      ? task.return(result.value)
+      : task.throw(result.error)
+
+    if (!state.done) {
+      if (state.value === SUSPEND) {
+        const { idle } = (task.group || MAIN).stack
+        idle.add(task)
+      } else {
+        enqueue(task)
+      }
+    }
+  } catch (error) {}
 }
 
 /**

@@ -4,11 +4,12 @@ import * as Task from "../src/lib.js"
 describe("wait", () => {
   it("does sync wait on non-promise", async () => {
     let isSync = true
-    const promise = inspect(function* () {
+    function* main() {
       const message = yield* Task.wait(5)
       assert.equal(isSync, true, "expect to be sync")
       return message
-    })
+    }
+    const promise = inspect(main())
     isSync = false
     const result = await promise
 
@@ -17,11 +18,12 @@ describe("wait", () => {
 
   it("does await on promise", async () => {
     let isSync = true
-    const promise = inspect(function* () {
+    function* main() {
       const message = yield* Task.wait(Promise.resolve(5))
       assert.equal(isSync, false, "expect to be async")
       return message
-    })
+    }
+    const promise = inspect(main())
     isSync = false
     const result = await promise
 
@@ -33,10 +35,13 @@ describe("wait", () => {
   })
 
   it("lets you yield", async () => {
-    const result = await inspect(function* () {
+    function* main() {
+      /** @type {unknown} */
       const value = yield 5
       assert.equal(value, undefined, "return undefined on normal yield")
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       value: undefined,
@@ -47,10 +52,12 @@ describe("wait", () => {
 
   it("does throw on failed promise", async () => {
     const boom = new Error("boom!")
-    const result = await inspect(function* () {
+    function* main() {
       const message = yield* Task.wait(Promise.reject(boom))
       return message
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
@@ -61,14 +68,16 @@ describe("wait", () => {
 
   it("can catch promise errors", async () => {
     const boom = new Error("boom!")
-    const result = await inspect(function* () {
+    function* main() {
       try {
         const message = yield* Task.wait(Promise.reject(boom))
         return message
       } catch (error) {
         return error
       }
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: true,
@@ -83,10 +92,11 @@ describe("wait", () => {
       throw boom
     }
 
-    const result = await inspect(function* () {
+    function* main() {
       fail()
-    })
+    }
 
+    const result = await inspect(main())
     assert.deepEqual(result, {
       ok: false,
       mail: [],
@@ -100,13 +110,15 @@ describe("wait", () => {
       throw boom
     }
 
-    const result = await inspect(function* () {
+    function* main() {
       try {
         fail()
       } catch (error) {
         return error
       }
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: true,
@@ -118,14 +130,16 @@ describe("wait", () => {
   it("use finally", async () => {
     const boom = new Error("boom!")
     let finalized = false
-    const result = await inspect(function* () {
+    function* main() {
       try {
         const message = yield* Task.wait(Promise.reject(boom))
         return message
       } finally {
         finalized = true
       }
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
@@ -139,10 +153,12 @@ describe("wait", () => {
 
 describe("messaging", () => {
   it("can send message", async () => {
-    const result = await inspect(function* () {
+    function* main() {
       yield* Task.send("one")
       yield* Task.send("two")
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: true,
@@ -152,14 +168,15 @@ describe("messaging", () => {
   })
 
   it("can send message in finally", async () => {
-    const result = await inspect(function* () {
+    function* main() {
       try {
         yield* Task.send("one")
         yield* Task.send("two")
       } finally {
         yield* Task.send("three")
       }
-    })
+    }
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: true,
@@ -168,7 +185,7 @@ describe("messaging", () => {
     })
   })
   it("can send message after exception", async () => {
-    const result = await inspect(function* () {
+    function* main() {
       try {
         yield* Task.send("one")
         yield* Task.send("two")
@@ -178,7 +195,8 @@ describe("messaging", () => {
       } finally {
         yield* Task.send("four")
       }
-    })
+    }
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
@@ -188,7 +206,7 @@ describe("messaging", () => {
   })
 
   it("can send message after rejected promise", async () => {
-    const result = await inspect(function* () {
+    function* main() {
       try {
         yield* Task.send("one")
         yield* Task.send("two")
@@ -197,7 +215,9 @@ describe("messaging", () => {
       } finally {
         yield* Task.send("four")
       }
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
@@ -207,7 +227,7 @@ describe("messaging", () => {
   })
 
   it("can send message after rejected promise", async () => {
-    const result = await inspect(function* () {
+    function* main() {
       try {
         yield* Task.send("one")
         yield* Task.send("two")
@@ -217,7 +237,8 @@ describe("messaging", () => {
         yield* Task.wait(Promise.reject("oops"))
         yield* Task.send("four")
       }
-    })
+    }
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
@@ -227,22 +248,24 @@ describe("messaging", () => {
   })
 
   it("subtasks can send messages", async () => {
-    function* child() {
+    function* worker() {
       yield* Task.send("c1")
     }
 
-    const result = await inspect(function* () {
+    function* main() {
       try {
         yield* Task.send("one")
         yield* Task.send("two")
-        yield* child()
+        yield* worker()
         yield* Task.send("three")
       } finally {
         yield* Task.send("four")
         yield* Task.wait(Promise.reject("oops"))
         yield* Task.send("five")
       }
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
@@ -258,15 +281,16 @@ describe("subtasks", () => {
      * @param {Task.Await<number>} x
      * @param {Task.Await<number>} y
      */
-    function* child(x, y) {
+    function* worker(x, y) {
       return (yield* Task.wait(x)) + (yield* Task.wait(y))
     }
 
-    const result = await inspect(function* () {
-      const one = yield* child(1, 2)
-      const two = yield* child(Promise.reject(5), one)
+    function* main() {
+      const one = yield* worker(1, 2)
+      const two = yield* worker(Promise.reject(5), one)
       return two
-    })
+    }
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
@@ -275,67 +299,67 @@ describe("subtasks", () => {
     })
   })
 
-  it.skip("fork does not crash parent", async () => {
-    /** @type {string[]} */
-    const children = []
+  it("fork does not crash parent", async () => {
+    const { output, log } = createLog()
+
     /**
      * @param {string} id
      */
-    function* child(id) {
-      children.push(id)
+    function* worker(id) {
+      log(`start ${id}`)
       yield* Task.send(`${id}#1`)
       yield* Task.wait(Promise.reject("boom"))
       return 0
     }
 
-    const result = await inspect(function* () {
-      // @ts-expect-error - forked tasks can send messages
-      yield* Task.fork(child("A"))
+    function* main() {
+      yield* Task.fork(worker("A"))
       yield* Task.wait(Promise.resolve("one"))
-      // @ts-expect-error - forked tasks can send messages
-      yield* Task.fork(child("B"))
-      yield* Task.send("hi")
+      yield* Task.fork(worker("B"))
       return yield* Task.wait(Promise.resolve("two"))
-    })
+    }
+
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: true,
       value: "two",
-      mail: ["hi"],
+      mail: [],
     })
-    assert.deepEqual(children, ["A", "B"])
+    assert.deepEqual(output, ["start A", "start B"])
   })
 
-  it.skip("waiting on forks result crashes parent", async () => {
-    /** @type {string[]} */
-    const children = []
+  it("waiting on forks result crashes parent", async () => {
+    const { output, log } = createLog()
+
     /**
      * @param {string} id
      */
-    function* child(id) {
-      children.push(id)
+    function* worker(id) {
+      log(`Start ${id}`)
       yield* Task.send(`${id}#1`)
       yield* Task.wait(Promise.reject(`${id}!boom`))
+    }
+
+    function* main() {
+      yield* Task.fork(worker("A"))
+      yield* Task.wait(Promise.resolve("one"))
+      const b = yield* Task.fork(worker("B"))
+      yield* Task.send("hi")
+      yield* Task.join(b)
+      yield* Task.wait(Promise.resolve("two"))
+
       return 0
     }
 
-    const result = await inspect(function* () {
-      // @ts-expect-error - forked tasks can send messages
-      yield* Task.fork(child("A"))
-      yield* Task.wait(Promise.resolve("one"))
-      // @ts-expect-error - forked tasks can send messages
-      const b = yield* Task.fork(child("B"))
-      yield* Task.send("hi")
-      yield* Task.wait(b.result)
-      return yield* Task.wait(Promise.resolve("two"))
-    })
+    const result = await inspect(main())
 
     assert.deepEqual(result, {
       ok: false,
       error: "B!boom",
-      mail: ["hi"],
+      mail: ["hi", "B#1"],
     })
-    assert.deepEqual(children, ["A", "B"])
+    assert.deepEqual(output, ["Start A", "Start B"])
   })
 })
 
@@ -346,7 +370,7 @@ describe("concurrency", () => {
      * @param {number} duration
      * @param {number} count
      */
-    function* child(name, duration, count) {
+    function* worker(name, duration, count) {
       let n = 0
       while (n++ < count) {
         yield* Task.sleep(duration)
@@ -354,15 +378,15 @@ describe("concurrency", () => {
       }
     }
 
-    function* parent() {
-      const a = yield* Task.spawn(child("a", 5, 6))
+    function* main() {
+      const a = yield* Task.spawn(worker("a", 5, 6))
       yield* Task.sleep(5)
-      const b = yield* Task.spawn(child("b", 7, 7))
+      const b = yield* Task.spawn(worker("b", 7, 7))
 
       yield* Task.join(a, b)
     }
 
-    const result = await inspect(parent)
+    const result = await inspect(main())
     const { mail } = result
     assert.deepEqual(
       [...mail].sort(),
@@ -409,7 +433,7 @@ describe("concurrency", () => {
 
       log("Join")
       const merge = Task.join(a, b)
-      merge.tag = "🚦"
+      merge.withTag = "🚦"
       yield* merge
 
       log("Nap")
@@ -465,7 +489,7 @@ describe("concurrency", () => {
   })
 })
 
-describe("type level errors", async () => {
+describe("type level errors", () => {
   it("must yield* not yield", async () => {
     const main = function* () {
       yield Task.sleep(2)
@@ -478,44 +502,319 @@ describe("type level errors", async () => {
   })
 
   it("must yield* not yield", async () => {
-    const child = function* () {}
+    const worker = function* () {}
     const main = function* () {
-      // @ts-expect-error tels you to use child()
-      yield Task.spawn(child)
+      // @ts-expect-error tels you to use worker()
+      yield Task.spawn(worker)
     }
   })
 })
 
-describe("can abort", async () => {
-  it("can abort sleeping task", () => {})
+describe("can abort", () => {
+  it("can terminate sleeping task", async () => {
+    let { output, log } = createLog()
+    function* main() {
+      log("fork worker")
+      const task = yield* Task.fork(worker())
+      log("nap")
+      yield* Task.sleep(1)
+      log("terminate worker")
+      yield* Task.terminate(task)
+      log("exit main")
+    }
+
+    function* worker() {
+      log("start worker")
+      yield* Task.sleep(20)
+      log("wake worker")
+    }
+
+    const expect = [
+      "fork worker",
+      "nap",
+      "start worker",
+      "terminate worker",
+      "exit main",
+    ]
+
+    await Task.promise(main())
+    assert.deepEqual(output, expect)
+    await Task.promise(Task.sleep(30))
+
+    assert.deepEqual(output, expect)
+  })
+
+  it("sleeping task can still cleanup", async () => {
+    let { output, log } = createLog()
+    function* main() {
+      log("fork worker")
+      const task = yield* Task.fork(worker())
+      log("nap")
+      yield* Task.sleep(1)
+      log("abort worker")
+      yield* Task.terminate(task)
+      log("exit main")
+    }
+
+    function* worker() {
+      log("start worker")
+
+      const id = setTimeout(() => {
+        log("timeout fired")
+      }, 10)
+
+      try {
+        yield* Task.suspend()
+      } finally {
+        clearTimeout(id)
+        log("can clean up even though aborted")
+      }
+    }
+
+    const expect = [
+      "fork worker",
+      "nap",
+      "start worker",
+      "abort worker",
+      "can clean up even though aborted",
+      "exit main",
+    ]
+
+    await Task.promise(main())
+    await Task.promise(Task.sleep(30))
+
+    assert.deepEqual(output, expect)
+  })
+
+  it("can abort with an error", async () => {
+    let { output, log } = createLog()
+    function* main() {
+      log("fork worker")
+      const fork = yield* Task.fork(worker())
+      log("nap")
+      yield* Task.sleep(1)
+      log("abort worker")
+      yield* Task.abort(fork, new Error("kill"))
+      log("exit main")
+    }
+
+    function* worker() {
+      try {
+        log("start worker")
+        yield* Task.sleep(20)
+        log("wake worker")
+      } catch (error) {
+        log(`aborted ${error}`)
+      }
+    }
+
+    const expect = [
+      "fork worker",
+      "nap",
+      "start worker",
+      "abort worker",
+      "aborted Error: kill",
+      "exit main",
+    ]
+
+    await Task.promise(main())
+    assert.deepEqual(output, expect)
+    await Task.promise(Task.sleep(30))
+
+    assert.deepEqual(output, expect)
+  })
+
+  it("can still do things when aborted", async () => {
+    let { output, log } = createLog()
+    function* main() {
+      log("fork worker")
+      const fork = yield* Task.fork(worker())
+      log("nap")
+      yield* Task.sleep(1)
+      log("abort worker")
+      yield* Task.abort(fork, new Error("kill"))
+      log("exit main")
+    }
+
+    function* worker() {
+      try {
+        log("start worker")
+        yield* Task.sleep(20)
+        log("wake worker")
+      } catch (error) {
+        log(`aborted ${error}`)
+        yield* Task.sleep(2)
+        log("ok bye")
+      }
+    }
+
+    const expect = [
+      "fork worker",
+      "nap",
+      "start worker",
+      "abort worker",
+      "aborted Error: kill",
+      "exit main",
+    ]
+
+    await Task.promise(main())
+    assert.deepEqual(output, expect)
+    await Task.promise(Task.sleep(10))
+
+    assert.deepEqual(output, [...expect, "ok bye"])
+  })
+
+  it("can exit the task", async () => {
+    let { output, log } = createLog()
+    function* main() {
+      log("fork worker")
+      const fork = yield* Task.fork(worker())
+      log("nap")
+      yield* Task.sleep(1)
+      log("exit worker")
+      yield* Task.exit(fork, 0)
+      log("exit main")
+    }
+
+    function* worker() {
+      try {
+        log("start worker")
+        yield* Task.sleep(20)
+        log("wake worker")
+        return 0
+      } catch (error) {
+        log(`aborted ${error}`)
+        return 1
+      }
+    }
+
+    const expect = [
+      "fork worker",
+      "nap",
+      "start worker",
+      "exit worker",
+      "exit main",
+    ]
+
+    await Task.promise(main())
+    assert.deepEqual(output, expect)
+    await Task.promise(Task.sleep(30))
+
+    assert.deepEqual(output, expect)
+  })
+})
+
+describe("promise", () => {
+  it("fails promise if task fails", async () => {
+    function* main() {
+      throw new Error("boom")
+    }
+
+    const result = await Task.promise(main()).catch(error => error)
+    assert.match(result, /boom/)
+  })
+})
+
+describe("tag", () => {
+  it("tags effect", async () => {
+    function* fx() {
+      yield* Task.send(1)
+      yield* Task.sleep(2)
+
+      yield* Task.send(2)
+    }
+
+    const result = await inspect(Task.tag(fx(), "fx"))
+    assert.deepEqual(result, {
+      ok: true,
+      value: undefined,
+      mail: [
+        { type: "fx", fx: 1 },
+        { type: "fx", fx: 2 },
+      ],
+    })
+  })
+
+  it("tags with errors", async () => {
+    const error = new Error("boom")
+    function* fx() {
+      yield* Task.send(1)
+      throw error
+    }
+
+    function* main() {
+      yield* Task.tag(fx(), "fx")
+    }
+
+    const result = await inspect(main())
+    assert.deepEqual(result, {
+      ok: false,
+      error,
+      mail: [{ type: "fx", fx: 1 }],
+    })
+  })
+
+  it("can terminate tagged", async () => {
+    const { output, log } = createLog()
+    function* fx() {
+      yield* Task.send(1)
+      log("send 1")
+      yield* Task.sleep(1)
+      yield* Task.send(2)
+      log("send 2")
+    }
+
+    function* main() {
+      const fork = yield* Task.fork(Task.tag(fx(), "fx"))
+      yield* Task.sleep(1)
+      yield* Task.terminate(fork)
+    }
+
+    const result = await inspect(main())
+    assert.deepEqual(result, {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+    assert.deepEqual(output, ["send 1"])
+    await Task.promise(Task.sleep(5))
+
+    assert.deepEqual(output, ["send 1"])
+  })
+
+  it("can abort tagged", async () => {
+    const { output, log } = createLog()
+    function* fx() {
+      yield* Task.send(1)
+      log("send 1")
+      yield* Task.sleep(1)
+      yield* Task.send(2)
+      log("send 2")
+    }
+
+    function* main() {
+      const fork = yield* Task.fork(Task.tag(fx(), "fx"))
+      yield* Task.sleep(1)
+      yield* Task.abort(fork, new Error("kill"))
+    }
+
+    const result = await inspect(main())
+    assert.deepEqual(result, {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+    assert.deepEqual(output, ["send 1"])
+    await Task.promise(Task.sleep(5))
+
+    assert.deepEqual(output, ["send 1"])
+  })
 })
 /**
  * @template T, X, M
- * @param {() => Task.Actor<T, X, M>} activate
+ * @param {Task.Actor<T, X, M>} task
  */
-const inspect = activate => Task.promise(inspector(activate()))
-
-// /** @type {M[]} */
-// const mail = []
-// return Task.execute(activate(), {
-//   send (message) {
-//     mail.push(message)
-//   },
-//   throw (error) {
-//     return { ok: false, error, mail }
-//   },
-//   return (value) {
-//     return { ok: true, value, mail }
-//   },
-
-//   /**
-//    * @param input
-//    * @returns {never}
-//    */
-//   interpret (input) {
-//     throw new Error(`Can not interpret ${JSON.stringify(input)}`)
-//   }
-// })
+const inspect = task => Task.promise(inspector(task))
 
 /**
  * @template T, X, M

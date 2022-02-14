@@ -42,22 +42,27 @@ export type Message<T> = T extends Generator
  */
 export interface Actor<
   Success extends unknown = unknown,
-  Failure = Error,
+  Failure extends unknown = Error,
   Message extends unknown = unknown
-> extends Generator<
+> {
+  /*
+extends Generator<
     Instruction<Message>,
     Success,
     Actor<Success, Failure, Message> | unknown
-  > {
+  > 
+*/
+
+  [Symbol.iterator](): Actor<Success, Failure, Message>
   throw(error: Failure): ActorState<Success, Message>
   return(value: Success): ActorState<Success, Message>
   next(
     value: Actor<Success, Failure, Message> | unknown
   ): ActorState<Success, Message>
 
-  group?: TaskGroup<Failure, Message>
+  group?: Group<Failure, Message>
 
-  tag?: string
+  withTag?: string
   id?: number
 }
 
@@ -108,6 +113,7 @@ export interface TaskGroup<X, M> {
 }
 
 export interface Main<X, M> {
+  id: 0
   parent?: null
   status: Status
   stack: Stack<unknown, X, M>
