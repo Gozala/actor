@@ -556,18 +556,17 @@ const step = function* (context) {
   const { active } = context.stack
   let task = active[0]
   while (task) {
-    // we never actually set task.state just use it to infer type
-    const { group } = task
     /** @type {Task.ActorState<unknown, M>} */
     let state = { done: false, value: CONTEXT }
     // Keep processing insturctions until task is done, it send suspend request
-    // or it's group changed.
+    // or it's has been removed from the active queue.
     // ⚠️ Group changes require extra care so please make sure to understand
     // the detail here. It occurs when spawned task(s) are joined into a group
-    // which will change the task driver, that is why if group changes we need
-    // to drop the task otherwise race condition will occur due to task been
-    // driven by multiple concurrent schedulers.
-    loop: while (!state.done && task.group === group) {
+    // which will change the task driver, that is when `task === active[0]` will
+    // became false and need to to drop the task immediately otherwise race
+    // condition will occur due to task been  driven by multiple concurrent
+    // schedulers.
+    loop: while (!state.done && task === active[0]) {
       try {
         const instruction = state.value
         switch (instruction) {
@@ -619,8 +618,8 @@ let ID = 0
 
 /**
  * @template T, M, X
- * @param {Task.Actor<M, T, X>} task
- * @returns {Task.Task<Task.Actor<M, T, X>, never>}
+ * @param {Task.Actor<T, M, X>} task
+ * @returns {Task.Task<Task.Actor<T, M, X>, never>}
  */
 
 export function* spawn(task) {
@@ -631,13 +630,14 @@ export function* spawn(task) {
 
 /**
  * @template T, M, X
- * @param {Task.Actor<M, T, X>} task
- * @returns {Task.Task<Task.Actor<M, T, X>, never>}
+ * @param {Task.Actor<T, M, X>} task
+ * @returns {Task.Fork<T, M, X>}
  */
-export function* fork(task) {
-  enqueue(task)
-  return task
-}
+export const fork = task => new Fork(task)
+// export function* fork(task) {
+//   enqueue(task)
+//   return task
+// }
 
 /**
  * Abort the given task succesfully with a given value.
@@ -737,5 +737,50 @@ const move = (task, to) => {
       }
       // otherwise task is complete
     }
+  }
+}
+
+/**
+ * @template T, X, M
+ * @implements {Task.Fork<T, X, M>}
+ * @implements {Promise<T>}
+ */
+class Fork {
+  /**
+   * @param {Task.Actor<T, X, M>} task
+   */
+  constructor(task) {
+    this.task = task
+  }
+  /**
+   * @param {(value:T) => any} [onresolve]
+   * @param {(error:X) => any} [onreject]
+   */
+  then(onresolve, onreject) {
+    const promise = new Promise((resolve, reject) =>
+      enqueue(then(this.task, resolve, reject))
+    )
+
+    return onresolve || onreject ? promise.then(onresolve, onreject) : promise
+  }
+  /**
+   * @param {(error:X) => any} onreject
+   */
+  catch(onreject) {
+    return this.then().catch(onreject)
+  }
+  /**
+   * @param {() => any} onfinally
+   */
+  finally(onfinally) {
+    return this.then().finally(onfinally)
+  }
+  get [Symbol.toStringTag]() {
+    return "Fork"
+  }
+
+  *[Symbol.iterator]() {
+    enqueue(this.task)
+    return this.task
   }
 }

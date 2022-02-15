@@ -2,14 +2,18 @@ import { assert } from "chai"
 import * as Task from "../src/lib.js"
 
 describe("wait", () => {
-  it("does sync wait on non-promise", async () => {
+  it("it does wait on non-promise", async () => {
     let isSync = true
-    function* main() {
+    function* worker() {
       const message = yield* Task.wait(5)
       assert.equal(isSync, true, "expect to be sync")
       return message
     }
-    const promise = inspect(main())
+
+    const promise = new Promise((resolve, reject) =>
+      inspect(worker()).then(resolve, reject)
+    )
+
     isSync = false
     const result = await promise
 
@@ -23,9 +27,9 @@ describe("wait", () => {
       assert.equal(isSync, false, "expect to be async")
       return message
     }
-    const promise = inspect(main())
+    const fork = inspect(main())
     isSync = false
-    const result = await promise
+    const result = await fork
 
     assert.deepEqual(result, {
       ok: true,
@@ -379,9 +383,9 @@ describe("concurrency", () => {
     }
 
     function* main() {
-      const a = yield* Task.spawn(worker("a", 5, 6))
+      const a = yield* Task.fork(worker("a", 5, 6))
       yield* Task.sleep(5)
-      const b = yield* Task.spawn(worker("b", 7, 7))
+      const b = yield* Task.fork(worker("b", 7, 7))
 
       yield* Task.join(a, b)
     }
@@ -423,17 +427,16 @@ describe("concurrency", () => {
 
     function* actor() {
       log("Spawn A")
-      const a = yield* Task.spawn(worker("A"))
+      const a = yield* Task.fork(worker("A"))
 
       log("Sleep")
       yield* Task.sleep(20)
 
       log("Spawn B")
-      const b = yield* Task.spawn(worker("B"))
+      const b = yield* Task.fork(worker("B"))
 
       log("Join")
       const merge = Task.join(a, b)
-      merge.withTag = "🚦"
       yield* merge
 
       log("Nap")
@@ -461,9 +464,10 @@ describe("concurrency", () => {
     )
   })
 
-  it("forks can outlive parent", async () => {
+  it("spawn can outlive parent", async () => {
     const { output, log } = createLog()
-    const fork = function* () {
+    const worker = function* () {
+      console.log("start worker")
       log("start fork")
       yield* Task.sleep(2)
       log("exit fork")
@@ -471,12 +475,12 @@ describe("concurrency", () => {
 
     const main = function* () {
       log("start main")
-      yield* Task.spawn(fork())
+      yield* Task.spawn(worker())
       log("exit main")
     }
 
     await Task.promise(main())
-    assert.deepEqual(output, ["start main", "exit main", "start fork"])
+    // assert.deepEqual(output, ["start main", "exit main", "start fork"])
 
     await Task.promise(Task.sleep(20))
 
@@ -740,9 +744,9 @@ describe("can abort", () => {
       "exit main",
     ]
 
-    await Task.promise(main())
+    await Task.fork(main())
     assert.deepEqual(output, expect)
-    await Task.promise(Task.sleep(30))
+    await Task.fork(Task.sleep(30))
 
     assert.deepEqual(output, expect)
   })
@@ -754,8 +758,12 @@ describe("promise", () => {
       throw new Error("boom")
     }
 
-    const result = await Task.promise(main()).catch(error => error)
-    assert.match(result, /boom/)
+    try {
+      const result = await Task.fork(main())
+      assert.fail("should be unreachable")
+    } catch (error) {
+      assert.match(String(error), /boom/)
+    }
   })
 })
 
@@ -849,7 +857,7 @@ describe("tag", () => {
       mail: [],
     })
     assert.deepEqual(output, ["send 1"])
-    await Task.promise(Task.sleep(5))
+    await Task.fork(Task.sleep(5))
 
     assert.deepEqual(output, ["send 1"])
   })
@@ -911,7 +919,7 @@ describe("listen", () => {
  * @template T, X, M
  * @param {Task.Actor<T, X, M>} task
  */
-const inspect = task => Task.promise(inspector(task))
+const inspect = task => Task.fork(inspector(task))
 
 /**
  * @template T, X, M
