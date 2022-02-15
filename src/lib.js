@@ -214,7 +214,7 @@ export const listen = function* (source) {
     tasks.push(task)
   }
 
-  yield* Task.join(...tasks)
+  yield* Task.group(...tasks)
 }
 
 /**
@@ -696,7 +696,7 @@ function* conclude(task, result) {
  * @param {Task.Actor<void, X, M>[]} tasks
  * @returns {Task.Actor<void, X, M>}
  */
-export function* join(...tasks) {
+export function* group(...tasks) {
   const self = yield* current()
   /** @type {Task.TaskGroup<X, M>} */
   const group = new Group(self)

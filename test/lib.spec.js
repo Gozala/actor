@@ -350,7 +350,7 @@ describe("subtasks", () => {
       yield* Task.wait(Promise.resolve("one"))
       const b = yield* Task.fork(worker("B"))
       yield* Task.send("hi")
-      yield* Task.join(b)
+      yield* Task.group(b)
       yield* Task.wait(Promise.resolve("two"))
 
       return 0
@@ -387,7 +387,7 @@ describe("concurrency", () => {
       yield* Task.sleep(5)
       const b = yield* Task.fork(worker("b", 7, 7))
 
-      yield* Task.join(a, b)
+      yield* Task.group(a, b)
     }
 
     const result = await inspect(main())
@@ -436,7 +436,7 @@ describe("concurrency", () => {
       const b = yield* Task.fork(worker("B"))
 
       log("Join")
-      const merge = Task.join(a, b)
+      const merge = Task.group(a, b)
       yield* merge
 
       log("Nap")
