@@ -427,15 +427,15 @@ const IDLE = "idle"
 const ACTIVE = "active"
 
 /**
- * @template X, M
- * @implements {Task.TaskGroup<X, M>}
+ * @template T, X, M
+ * @implements {Task.TaskGroup<T, X, M>}
  */
 class Group {
   /**
-   * @param {Task.Actor<unknown, X, M>} driver
-   * @param {Task.Actor<void, X, M>[]} [active]
-   * @param {Set<Task.Actor<void, X, M>>} [idle]
-   * @param {Task.Stack<void, X, M>} [stack]
+   * @param {Task.Actor<T, X, M>} driver
+   * @param {Task.Actor<T, X, M>[]} [active]
+   * @param {Set<Task.Actor<T, X, M>>} [idle]
+   * @param {Task.Stack<T, X, M>} [stack]
    */
   constructor(
     driver,
@@ -451,8 +451,8 @@ class Group {
 }
 
 /**
- * @template X, M
- * @implements {Task.Main<X, M>}
+ * @template T, X, M
+ * @implements {Task.Main<T, X, M>}
  */
 class Main {
   constructor() {
@@ -479,18 +479,18 @@ class Stack {
 /**
  * Task to drive group to completion.
  *
- * @template X, M
- * @param {Task.Group<X, M>} group
+ * @template T, X, M
+ * @param {Task.Group<T, X, M>} group
  * @returns {Task.Actor<void, X, M>}
  */
 const drive = function* (group) {
   // Unless group has no work
   while (true) {
-    yield* step(group)
+    const state = yield* step(group)
     if (!isEmpty(group.stack)) {
       yield* suspend()
     } else {
-      break
+      return /** @type {T} */ (state.value)
     }
   }
 }
@@ -548,16 +548,18 @@ export const enqueue = task => {
 export const resume = enqueue
 
 /**
- * @template X, M
- * @param {Task.Group<X, M>} context
+ * @template T, X, M
+ * @param {Task.Group<T, X, M>} context
  */
 
 const step = function* (context) {
   const { active } = context.stack
   let task = active[0]
+  /** @type {Task.ActorState<T, M>} */
+  let state = { done: false, value: CONTEXT }
   while (task) {
-    /** @type {Task.ActorState<unknown, M>} */
-    let state = { done: false, value: CONTEXT }
+    /** @type {Task.ActorState<T, M>} */
+    state = { done: false, value: CONTEXT }
     // Keep processing insturctions until task is done, it send suspend request
     // or it's has been removed from the active queue.
     // ⚠️ Group changes require extra care so please make sure to understand
@@ -595,6 +597,8 @@ const step = function* (context) {
     active.shift()
     task = active[0]
   }
+
+  return state
 }
 
 // /**
@@ -610,10 +614,8 @@ const step = function* (context) {
 //   task.throw(new AbortError('Task was aborted'))
 // }
 
-/** @type {Task.Main<any, any>} */
+/** @type {Task.Main<any, any, any>} */
 const MAIN = new Main()
-/** @type {Task.Group<any, any>} */
-const ABORTED = Object.assign(Object.create(Group.prototype), { id: -1 })
 let ID = 0
 
 /**
@@ -692,13 +694,13 @@ function* conclude(task, result) {
 }
 
 /**
- * @template X, M
- * @param {Task.Actor<void, X, M>[]} tasks
+ * @template T, X, M
+ * @param {Task.Actor<T, X, M>[]} tasks
  * @returns {Task.Actor<void, X, M>}
  */
 export function* group(...tasks) {
   const self = yield* current()
-  /** @type {Task.TaskGroup<X, M>} */
+  /** @type {Task.TaskGroup<T, X, M>} */
   const group = new Group(self)
 
   for (const task of tasks) {
@@ -709,9 +711,9 @@ export function* group(...tasks) {
 }
 
 /**
- * @template X, M
- * @param {Task.Actor<void, X, M>} task
- * @param {Task.TaskGroup<X, M>} to
+ * @template T, X, M
+ * @param {Task.Actor<T, X, M>} task
+ * @param {Task.TaskGroup<T, X, M>} to
  */
 const move = (task, to) => {
   const from = task.group || MAIN

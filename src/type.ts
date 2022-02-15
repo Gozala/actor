@@ -8,7 +8,6 @@ export type Await<T> = T | PromiseLike<T>
 
 type CompileError<Reason extends string> = `🚨 ${Reason}`
 
-export type Message2<T> = Exclude<T, Generator>
 /**
  * Helper type to guard users against easy to make mistakes.
  */
@@ -60,9 +59,8 @@ extends Generator<
     value: Actor<Success, Failure, Message> | unknown
   ): ActorState<Success, Message>
 
-  group?: Group<Failure, Message>
+  group?: Group<Success, Failure, Message>
 
-  withTag?: string
   id?: number
 }
 
@@ -103,23 +101,31 @@ export interface Effect<Event> extends Actor<void, never, Event> {}
 
 export type Status = "idle" | "active"
 
-export type Group<X, M> = Main<X, M> | TaskGroup<X, M>
+export type Group<T, X, M> = Main<T, X, M> | TaskGroup<T, X, M>
 
-export interface TaskGroup<X, M> {
+export interface TaskGroup<T, X, M> {
   id: number
-  parent: Group<X, M>
-  driver: Actor<unknown, X, M>
-  stack: Stack<unknown, X, M>
+  parent: Group<T, X, M>
+  driver: Actor<T, X, M>
+  stack: Stack<T, X, M>
 }
 
-export interface Main<X, M> {
+export interface Main<T, X, M> {
   id: 0
   parent?: null
   status: Status
-  stack: Stack<unknown, X, M>
+  stack: Stack<T, X, M>
 }
 
 export interface Stack<T = unknown, X = unknown, M = unknown> {
   active: Actor<T, X, M>[]
   idle: Set<Actor<T, X, M>>
+}
+
+export interface Fork<T, X, M> extends Promise<T> {
+  [Symbol.iterator](): Task<Actor<T, X, M>, never>
+}
+
+export interface Perform<T, X> {
+  then(resolve: (value: T) => unknown, reject: (error: X) => unknown): unknown
 }
