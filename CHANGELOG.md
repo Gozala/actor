@@ -1,5 +1,12 @@
 # Changelog
 
+### [1.0.2](https://www.github.com/Gozala/actor/compare/v1.0.1...v1.0.2) (2022-02-16)
+
+
+### Bug Fixes
+
+* **types:** publish typedefs ([99bbe10](https://www.github.com/Gozala/actor/commit/99bbe106d46fea22e5c91df4d6e47a208e0e27f7))
+
 ### [1.0.1](https://www.github.com/Gozala/actor/compare/v1.0.0...v1.0.1) (2022-02-16)
 
 
