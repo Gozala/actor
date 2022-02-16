@@ -35,7 +35,8 @@
       "src/unixfs.proto.js",
       "test/**",
       "dist/**"
-    ]
+    ],
+    "reports-dir": ".coverage"
   },
   "devDependencies": {
     "typescript": "^4.5.5",

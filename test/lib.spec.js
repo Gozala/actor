@@ -1,5 +1,5 @@
-import { assert } from "chai"
 import * as Task from "../src/lib.js"
+import { assert, createLog, inspect } from "./util.js"
 
 describe("wait", () => {
   it("it does wait on non-promise", async () => {
@@ -309,7 +309,7 @@ describe("subtasks", () => {
     /**
      * @param {string} id
      */
-    function* worker(id) {
+    function* work(id) {
       log(`start ${id}`)
       yield* Task.send(`${id}#1`)
       yield* Task.wait(Promise.reject("boom"))
@@ -317,9 +317,9 @@ describe("subtasks", () => {
     }
 
     function* main() {
-      yield* Task.fork(worker("A"))
+      yield* Task.fork(work("A"))
       yield* Task.wait(Promise.resolve("one"))
-      yield* Task.fork(worker("B"))
+      yield* Task.fork(work("B"))
       return yield* Task.wait(Promise.resolve("two"))
     }
 
@@ -346,11 +346,11 @@ describe("subtasks", () => {
     }
 
     function* main() {
-      yield* Task.fork(worker("A"))
+      const a = yield* Task.fork(worker("A"))
       yield* Task.wait(Promise.resolve("one"))
       const b = yield* Task.fork(worker("B"))
       yield* Task.send("hi")
-      yield* Task.group(b)
+      yield* Task.group([a, b])
       yield* Task.wait(Promise.resolve("two"))
 
       return 0
@@ -360,10 +360,143 @@ describe("subtasks", () => {
 
     assert.deepEqual(result, {
       ok: false,
-      error: "B!boom",
+      error: "A!boom",
       mail: ["hi", "B#1"],
     })
     assert.deepEqual(output, ["Start A", "Start B"])
+  })
+
+  it("joining failed forks crashes parent", async () => {
+    const { output, log } = createLog()
+
+    /**
+     * @param {string} id
+     */
+    function* work(id) {
+      log(`Start ${id}`)
+      yield* Task.send(`${id}#1`)
+      return id
+    }
+
+    function* main() {
+      const a = yield* Task.fork(work("A"))
+      yield* Task.wait(Promise.resolve("one"))
+      const b = yield* Task.fork(work("B"))
+      yield* Task.send("hi")
+      // yield* Task.sleep(20)
+
+      const result = yield* Task.join(b)
+      assert.deepEqual(result, "B")
+
+      const result2 = yield* Task.join(a)
+      assert.deepEqual(result2, "A")
+    }
+
+    const result = await inspect(main())
+
+    assert.deepEqual(result, {
+      ok: true,
+      value: undefined,
+      mail: ["hi", "B#1"],
+    })
+    assert.deepEqual(output, ["Start A", "Start B"])
+  })
+
+  it("faling group member terminates group", async () => {
+    const { output, log } = createLog()
+    const boom = new Error("boom")
+    function* work(ms = 0, name = "", crash = false) {
+      log(`${name} on duty`)
+      if (crash) {
+        yield* Task.sleep(ms)
+        throw boom
+      }
+
+      try {
+        yield* Task.sleep(ms)
+        log(`${name} is done`)
+      } finally {
+        log(`${name} cancelled`)
+      }
+    }
+
+    function* main() {
+      const a = yield* Task.fork(work(1, "A"))
+      yield* Task.sleep(2)
+      const b = yield* Task.fork(work(4, "B"))
+      const c = yield* Task.fork(work(7, "C"))
+      const d = yield* Task.fork(work(3, "D", true))
+      const e = yield* Task.fork(work(5, "E"))
+
+      try {
+        yield* Task.group([a, b, c, d, e])
+      } catch (error) {
+        yield* Task.sleep(10)
+        return { error }
+      }
+    }
+
+    assert.deepEqual(await inspect(main()), {
+      ok: true,
+      value: { error: boom },
+      mail: [],
+    })
+
+    assert.deepEqual(
+      output.sort(),
+      [
+        "A on duty",
+        "B on duty",
+        "C on duty",
+        "D on duty",
+        "E on duty",
+        "A is done",
+        "E cancelled",
+        "A cancelled",
+        "B cancelled",
+        "C cancelled",
+      ].sort()
+    )
+  })
+
+  it("failed task fails the group", async () => {
+    const { output, log } = createLog()
+    const boom = new Error("boom")
+
+    function* fail(error = boom) {
+      throw error
+    }
+    function* work(ms = 0, name = "") {
+      log(`${name} on duty`)
+
+      try {
+        yield* Task.sleep(ms)
+        log(`${name} is done`)
+      } finally {
+        log(`${name} cancelled`)
+      }
+    }
+
+    function* main() {
+      const f = yield* Task.fork(fail(boom))
+      const a = yield* Task.fork(work(2, "a"))
+      yield* Task.sleep()
+      assert.deepEqual(f.result, { ok: false, error: boom })
+      yield* Task.group([
+        a,
+        yield* Task.fork(work(4, "b")),
+        f,
+        yield* Task.fork(work(2, "c")),
+      ])
+    }
+
+    assert.deepEqual(await inspect(main()), {
+      ok: false,
+      error: boom,
+      mail: [],
+    })
+    await Task.fork(Task.sleep(10))
+    assert.deepEqual(output, ["a on duty", "a cancelled"])
   })
 })
 
@@ -387,7 +520,7 @@ describe("concurrency", () => {
       yield* Task.sleep(5)
       const b = yield* Task.fork(worker("b", 7, 7))
 
-      yield* Task.group(a, b)
+      yield* Task.group([a, b])
     }
 
     const result = await inspect(main())
@@ -419,24 +552,24 @@ describe("concurrency", () => {
     /**
      * @param {string} name
      */
-    function* worker(name) {
+    function* work(name) {
       log(`> ${name} sleep`)
       yield* Task.sleep(5)
       log(`< ${name} wake`)
     }
 
-    function* actor() {
+    function* main() {
       log("Spawn A")
-      const a = yield* Task.fork(worker("A"))
+      const a = yield* Task.fork(work("A"))
 
       log("Sleep")
       yield* Task.sleep(20)
 
       log("Spawn B")
-      const b = yield* Task.fork(worker("B"))
+      const b = yield* Task.fork(work("B"))
 
       log("Join")
-      const merge = Task.group(a, b)
+      const merge = Task.group([a, b])
       yield* merge
 
       log("Nap")
@@ -445,7 +578,7 @@ describe("concurrency", () => {
       log("Exit")
     }
 
-    await Task.promise(Object.assign(actor(), { tag: "🤖" }))
+    await Task.fork(main(), { name: "🤖" })
 
     assert.deepEqual(
       [...output],
@@ -464,10 +597,29 @@ describe("concurrency", () => {
     )
   })
 
+  it("joining failed task throws", async () => {
+    const boom = new Error("boom")
+    function* work() {
+      throw boom
+    }
+
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep(0)
+
+      yield* Task.join(worker)
+    }
+
+    const result = await inspect(main())
+    assert.deepEqual(result, {
+      ok: false,
+      error: boom,
+      mail: [],
+    })
+  })
   it("spawn can outlive parent", async () => {
     const { output, log } = createLog()
     const worker = function* () {
-      console.log("start worker")
       log("start fork")
       yield* Task.sleep(2)
       log("exit fork")
@@ -479,10 +631,10 @@ describe("concurrency", () => {
       log("exit main")
     }
 
-    await Task.promise(main())
+    await Task.fork(main())
     // assert.deepEqual(output, ["start main", "exit main", "start fork"])
 
-    await Task.promise(Task.sleep(20))
+    await Task.fork(Task.sleep(20))
 
     assert.deepEqual(output, [
       "start main",
@@ -490,6 +642,29 @@ describe("concurrency", () => {
       "start fork",
       "exit fork",
     ])
+  })
+
+  it("throws on exit", async () => {
+    const boom = new Error("boom")
+    function* work() {
+      try {
+        yield* Task.sleep(5)
+      } finally {
+        throw boom
+      }
+    }
+
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep()
+      yield* Task.exit(worker, undefined)
+    }
+
+    assert.deepEqual(await inspect(main()), {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
   })
 })
 
@@ -541,9 +716,9 @@ describe("can abort", () => {
       "exit main",
     ]
 
-    await Task.promise(main())
+    await Task.fork(main())
     assert.deepEqual(output, expect)
-    await Task.promise(Task.sleep(30))
+    await Task.fork(Task.sleep(30))
 
     assert.deepEqual(output, expect)
   })
@@ -584,8 +759,8 @@ describe("can abort", () => {
       "exit main",
     ]
 
-    await Task.promise(main())
-    await Task.promise(Task.sleep(30))
+    await Task.fork(main())
+    await Task.fork(Task.sleep(30))
 
     assert.deepEqual(output, expect)
   })
@@ -621,9 +796,9 @@ describe("can abort", () => {
       "exit main",
     ]
 
-    await Task.promise(main())
+    await Task.fork(main())
     assert.deepEqual(output, expect)
-    await Task.promise(Task.sleep(30))
+    await Task.fork(Task.sleep(30))
 
     assert.deepEqual(output, expect)
   })
@@ -661,9 +836,9 @@ describe("can abort", () => {
       "exit main",
     ]
 
-    await Task.promise(main())
+    await Task.fork(main())
     assert.deepEqual(output, expect)
-    await Task.promise(Task.sleep(10))
+    await Task.fork(Task.sleep(10))
 
     assert.deepEqual(output, [...expect, "ok bye"])
   })
@@ -705,9 +880,9 @@ describe("can abort", () => {
       "exit main",
     ]
 
-    await Task.promise(main())
+    await Task.fork(main())
     assert.deepEqual(output, expect)
-    await Task.promise(Task.sleep(10))
+    await Task.fork(Task.sleep(10))
 
     assert.deepEqual(output, [...expect, "ok bye now"])
   })
@@ -764,6 +939,48 @@ describe("promise", () => {
     } catch (error) {
       assert.match(String(error), /boom/)
     }
+  })
+
+  it("can use then", async () => {
+    function* work() {
+      yield* Task.sleep(1)
+      return 0
+    }
+
+    const result = await Task.fork(work()).then()
+    assert.deepEqual(result, 0)
+  })
+
+  it("can use catch", async () => {
+    const boom = new Error("boom")
+    function* work() {
+      yield* Task.sleep(1)
+      throw boom
+    }
+
+    const result = await Task.fork(work()).catch(e => e)
+    assert.deepEqual(result, boom)
+  })
+
+  it("can use finally", async () => {
+    const boom = new Error("boom")
+    function* work() {
+      yield* Task.sleep(1)
+      return 0
+    }
+
+    let invoked = false
+    const result = await Task.fork(work()).finally(() => {
+      invoked = true
+    })
+
+    assert.deepEqual(result, 0)
+    assert.deepEqual(invoked, true)
+  })
+
+  it("has toStringTag", async () => {
+    const fork = Task.fork(Task.sleep(2))
+    assert.deepEqual(String(fork), "[object ForkView]")
   })
 })
 
@@ -829,7 +1046,7 @@ describe("tag", () => {
       mail: [],
     })
     assert.deepEqual(output, ["send 1"])
-    await Task.promise(Task.sleep(5))
+    await Task.fork(Task.sleep(5))
 
     assert.deepEqual(output, ["send 1"])
   })
@@ -845,7 +1062,9 @@ describe("tag", () => {
     }
 
     function* main() {
-      const fork = yield* Task.fork(Task.tag(fx(), "fx"))
+      const tagged = Task.tag(fx(), "fx")
+      assert.equal(String(tagged), "[object TaggedEffect]")
+      const fork = yield* Task.fork(tagged)
       yield* Task.sleep(1)
       yield* Task.abort(fork, new Error("kill"))
     }
@@ -915,120 +1134,190 @@ describe("listen", () => {
   })
 })
 
-/**
- * @template T, X, M
- * @param {Task.Actor<T, X, M>} task
- */
-const inspect = task => Task.fork(inspector(task))
+describe("all operator", () => {
+  it("can get all results", async () => {
+    const { output, log } = createLog()
 
-/**
- * @template T, X, M
- * @param {Task.Actor<T, X, M>} task
- * @returns {Task.Task<{ ok: boolean, value?: T, error?: X, mail: M[] }, never>}
- */
-const inspector = function* (task) {
-  /** @type {M[]} */
-  const mail = []
-  let input
-  try {
-    while (true) {
-      const step = task.next(input)
-      if (step.done) {
-        return { ok: true, value: step.value, mail }
+    /** @type {(d:number, r:string) => Task.Task<string, never>} */
+    function* work(duration, result) {
+      yield* Task.sleep(duration)
+      log(result)
+      return result
+    }
+
+    function* main() {
+      const result = yield* Task.all([
+        work(2, "a"),
+        work(9, "b"),
+        work(5, "c"),
+        work(0, "d"),
+      ])
+
+      return result
+    }
+
+    const result = await Task.fork(main())
+    assert.deepEqual(result, ["a", "b", "c", "d"])
+    assert.notDeepEqual(result, output)
+    assert.deepEqual([...result].sort(), [...output].sort())
+  })
+
+  it("on failur all other tasks are aborted", async () => {
+    const { output, log } = createLog()
+
+    /** @type {(d:number, n:string, c?:boolean) => Task.Task<string, never>} */
+    function* work(duration, name, crash = false) {
+      yield* Task.sleep(duration)
+      log(name)
+      if (crash) {
+        throw name
       } else {
-        const instruction = step.value
-        if (Task.isInstruction(instruction)) {
-          input = yield instruction
-        } else {
-          mail.push(/** @type {M} */ (instruction))
-        }
+        return name
       }
     }
-  } catch (error) {
-    return { ok: false, error: /** @type {X} */ (error), mail }
-  }
-}
 
-const createLog = () => {
-  /** @type {string[]} */
-  const output = []
-  return {
-    output,
-    /**
-     * @param {string} message
-     */
-    log(message) {
-      output.push(message)
-    },
-  }
-}
-// describe('continuation', () => {
-//   it('can raise errors', () => {
-//     expect(() => evaluate(function * () {
-//       yield * shift(function * (k) {
-//         k.throw(new Error('boom!'))
-//       })
-//     })).to.throw('boom!')
-//   })
+    function* main() {
+      const result = yield* Task.all([
+        work(2, "a"),
+        work(9, "b"),
+        work(5, "c", true),
+        work(0, "d"),
+        work(8, "e"),
+      ])
 
-//   it('can catch errors', () => {
-//     expect(evaluate(function * () {
-//       try {
-//         yield * shift(function * (k) {
-//           return k.throw(new Error('boom!'))
-//         })
-//         return 'did not throw'
-//       } catch (error) {
-//         return Object(error).message
-//       }
-//     })).to.equal('boom!')
-//   })
+      return result
+    }
 
-//   it('allows you to return', () => {
-//     expect(evaluate(function * () {
-//       yield * shift(function * (k) {
-//         return k.return('hello')
-//       })
-//     })).to.equal('hello')
-//   })
-// })
+    const result = await inspect(main())
+    assert.deepEqual(result, {
+      ok: false,
+      error: "c",
+      mail: [],
+    })
 
-// describe('capture', () => {
-//   it('can capture completed operations', () => {
-//     expect(evaluate(() => capture(function * () { return 5 })))
-//       .to.deep.equal({ ok: true, value: 5 })
-//   })
+    await Task.fork(Task.sleep(20))
+    assert.deepEqual([...output].sort(), ["d", "a", "c"].sort())
+  })
+})
 
-//   it('can capture errored operations', () => {
-//     const boom = new Error('boom')
-//     const task = capture(function * () { throw boom })
-//     const result = evaluate(() => task)
+describe("Fork API", () => {
+  it("can use abort method", async () => {
+    const { output, log } = createLog()
+    const kill = new Error("kill")
+    function* work() {
+      log("start work")
+      yield* Task.sleep(2)
+      log("end work")
+    }
 
-//     expect(result)
-//       .to.deep.equal({ ok: false, error: boom })
-//   })
-// })
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep(0)
+      log("kill")
+      yield* worker.abort(kill)
+      log("nap")
+      yield* Task.sleep(5)
+      log("exit")
+    }
 
-// describe('sleep', () => {
-//   it('can sleep', async () => {
-//     const result = evaluate(function * () {
-//       console.log('start')
-//       const start = Date.now()
-//       console.log('sleep')
-//       yield * FX.sleep(500)
-//       console.log('awake')
-//       const end = Date.now()
+    await Task.fork(main())
+    assert.deepEqual(output, ["start work", "kill", "nap", "exit"])
+  })
+  it("can use exit method", async () => {
+    const { output, log } = createLog()
+    const kill = new Error("kill")
+    function* work() {
+      try {
+        log("start work")
+        yield* Task.sleep(2)
+        log("end work")
+      } finally {
+        log("cancel work")
+      }
+    }
 
-//       console.log('done', { start, end })
-//       return start - end
-//     })
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep(0)
+      log("kill")
+      yield* worker.exit()
+      log("nap")
+      yield* Task.sleep(5)
+      log("exit")
+    }
 
-//     console.log(result)
+    await Task.fork(main())
+    assert.deepEqual(output, [
+      "start work",
+      "kill",
+      "cancel work",
+      "nap",
+      "exit",
+    ])
+  })
 
-//     await new Promise(() => {
+  it("can use resume method", async () => {
+    const { output, log } = createLog()
+    function* work() {
+      log("suspend work")
+      yield* Task.suspend()
+      log("resume work")
+    }
 
-//     })
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep(2)
+      yield* worker.resume()
+      log("exit")
+    }
 
-//     expect(result).to.be.greaterThanOrEqual(500)
-//   })
-// })
+    await Task.fork(main())
+    assert.deepEqual(output, ["suspend work", "exit", "resume work"])
+  })
+
+  it("can use join method", async () => {
+    function* work() {
+      yield* Task.send("a")
+      yield* Task.sleep(2)
+      yield* Task.send("b")
+      return 0
+    }
+
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep(0)
+      const result = yield* worker.join()
+      return result
+    }
+
+    const result = await inspect(main())
+    assert.deepEqual(result, {
+      ok: true,
+      value: 0,
+      mail: ["b"],
+    })
+  })
+
+  it("has toStringTag", async () => {
+    function* main() {
+      const fork = yield* Task.fork(Task.sleep(2))
+      return String(fork)
+    }
+
+    assert.deepEqual(await Task.fork(main()), "[object Fork]")
+  })
+
+  it("is iterator", async () => {
+    function* work() {
+      yield* Task.send("a")
+      yield* Task.send("b")
+      yield* Task.send("c")
+    }
+    function* main() {
+      const fork = yield* Task.fork(work())
+      return [...fork]
+    }
+
+    assert.deepEqual(await Task.fork(main()), ["a", "b", "c"])
+  })
+})

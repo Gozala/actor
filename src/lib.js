@@ -3,7 +3,7 @@ import * as Task from "./type.js"
 export * from "./type.js"
 
 /**
- * Turns a task (that never fails) into an effect of it's success result.
+ * Turns a task (that never fails) into an effect of it's result.
  *
  * @template T
  * @param {Task.Task<T, never>} task
@@ -15,21 +15,21 @@ export const perform = function* (task) {
 }
 
 /**
- * Gets a handle to the actor that invokes it. Useful when actor needs to
+ * Gets a handle to the task that invoked it. Useful when task needs to
  * suspend execution until some outside event occurs, in which case handle
  * can be used resume execution (see `suspend` code example for more details)
  *
  * @template T, M, X
- * @returns {Task.Task<Task.Actor<T, X, M>, never>}
+ * @returns {Task.Task<Task.Task<T, X, M>, never>}
  */
 export function* current() {
-  return /** @type {Task.Actor<T, X, M>} */ (yield CONTEXT)
+  return /** @type {Task.Task<T, X, M>} */ (yield CONTEXT)
 }
 
 /**
- * Suspends the current actor (actor that invokes it),  which can then be
- * resumed from another actor or an outside event (e.g. `setTimeout` callback)
- * by calling the `resume` with an actor's handle.
+ * Suspends the current task (task that invokes it),  which can then be
+ * resumed from another task or an outside event (e.g. `setTimeout` callback)
+ * by calling the `resume` with an task's handle.
  *
  * Calling this in almost all cases is preceeded by call to `current()` in
  * order to obtain a `handle` which can be passed to `resume` function
@@ -78,10 +78,10 @@ export const suspend = function* () {
  * }
  * ```
  *
- * @param {number} duration
+ * @param {number} [duration]
  * @returns {Task.Task<void, never>}
  */
-export function* sleep(duration) {
+export function* sleep(duration = 0) {
   const task = yield* current()
   const id = setTimeout(enqueue, duration, task)
 
@@ -205,16 +205,16 @@ export const send = function* (message) {
  * @returns {Task.Effect<Tagged<Tag, T>>}
  */
 export const listen = function* (source) {
-  /** @type {Task.Effect<Tagged<Tag, T>>[]} */
-  const tasks = []
+  /** @type {Task.Fork<void, never, Tagged<Tag, T>>[]} */
+  const forks = []
   for (const entry of Object.entries(source)) {
     const [name, effect] = /** @type {[Tag, Task.Effect<T>]} */ (entry)
 
-    const task = yield* Task.fork(tag(effect, name))
-    tasks.push(task)
+    const fork = yield* Task.fork(tag(effect, name))
+    forks.push(fork)
   }
 
-  yield* Task.group(...tasks)
+  yield* Task.group(forks)
 }
 
 /**
@@ -230,9 +230,9 @@ export const listen = function* (source) {
  *
  * @template {string} Tag
  * @template T, M, X
- * @param {Task.Actor<T, X, M>} effect
+ * @param {Task.Task<T, X, M>} effect
  * @param {Tag} tag
- * @returns {Task.Actor<T, X, Tagged<Tag, M>>}
+ * @returns {Task.Task<T, X, Tagged<Tag, M>>}
  */
 export const tag = (effect, tag) =>
   effect instanceof Tagger
@@ -243,11 +243,11 @@ export const tag = (effect, tag) =>
  * @template {string} Tag
  * @template Success, Failure, Message
  *
- * @implements {Task.Actor<Success, Failure, Tagged<Tag, Message>>}
+ * @implements {Task.Task<Success, Failure, Tagged<Tag, Message>>}
  */
 class Tagger {
   /**
-   * @param {Task.Actor<Success, Failure, Message>} source
+   * @param {Task.Task<Success, Failure, Message>} source
    * @param {string[]} tags
    */
   constructor(tags, source) {
@@ -259,8 +259,8 @@ class Tagger {
     return this
   }
   /**
-   * @param {Task.ActorState<Success, Message>} state
-   * @returns {Task.ActorState<Success, Tagged<Tag, Message>>}
+   * @param {Task.TaskState<Success, Message>} state
+   * @returns {Task.TaskState<Success, Tagged<Tag, Message>>}
    */
   box(state) {
     if (state.done) {
@@ -269,7 +269,7 @@ class Tagger {
       switch (state.value) {
         case SUSPEND:
         case CONTEXT:
-          return /** @type {Task.ActorState<Success, Tagged<Tag, Message>>} */ (
+          return /** @type {Task.TaskState<Success, Tagged<Tag, Message>>} */ (
             state
           )
         default: {
@@ -306,6 +306,10 @@ class Tagger {
   return(value) {
     return this.box(this.source.return(value))
   }
+
+  get [Symbol.toStringTag]() {
+    return "TaggedEffect"
+  }
 }
 
 function* empty() {}
@@ -317,44 +321,49 @@ function* empty() {}
  */
 export const nofx = empty()
 
-// /**
-//  * @template T
-//  * @param {API.Task<T>[]} tasks
-//  * @returns {API.Task<T[]>}
-//  */
-// export const all = function * (tasks) {
-//   const results = []
-//   for (const task of tasks) {
-//     const { result } = yield * fork(task)
-//     results.push(result)
-//   }
+/**
+ * Takes array of tasks and
+ *
+ * @template T, X
+ * @param {Iterable<Task.Task<T, X>>} tasks
+ * @returns {Task.Task<T[], X>}
+ */
+export const all = function* (tasks) {
+  const self = yield* current()
 
-//   const values = []
-//   for (const result of results) {
-//     const value = yield * wait(result)
-//     values.push(value)
-//   }
+  /** @type {(id:number) => (value:T) => void} */
+  const succeed = id => value => {
+    delete forks[id]
+    results[id] = value
+    count -= 1
+    if (count === 0) {
+      enqueue(self)
+    }
+  }
 
-//   return values
-// }
+  /** @type {(error:X) => void} */
+  const fail = error => {
+    for (const handle of forks) {
+      if (handle) {
+        enqueue(abort(handle, error))
+      }
+    }
 
-// /**
-//  * @template T
-//  * @param {API.Task<T>[]} tasks
-//  * @returns {API.Effect<T>}
-//  */
-// export const batch = function * (tasks) {
-//   const results = []
-//   for (const task of tasks) {
-//     const { result } = yield * fork(task)
-//     results.push(result)
-//   }
+    enqueue(abort(self, error))
+  }
 
-//   for (const result of results) {
-//     const value = yield * wait(result)
-//     yield * send(value)
-//   }
-// }
+  /** @type {Task.Fork<void, never>[]} */
+  let forks = []
+  let count = 0
+  for (const task of tasks) {
+    const fork = yield* Task.fork(then(task, succeed(count++), fail))
+    forks.push(fork)
+  }
+  const results = new Array(count)
+
+  yield* suspend()
+  return results
+}
 
 /**
  * @template {string} Tag
@@ -367,32 +376,14 @@ const withTag = (tag, value) =>
   ({ type: tag, [tag]: value })
 
 /**
- * Executes given actor
- *
- * @template T, X, M
- * @param {Task.Actor<T, X, M>} task
- */
-export const execute = task => enqueue(task)
-
-/**
- * Executes a task and returns a promise of the result.
- *
- * @template T, X
- * @param {Task.Task<T, X>} task
- * @returns {Promise<T>}
- */
-export const promise = task =>
-  new Promise((resolve, reject) => execute(then(task, resolve, reject)))
-
-/**
  * Kind of like promise.then which is handy when you want to extract result
  * from the given task from the outside.
  *
  * @template T, U, X, M
- * @param {Task.Actor<T, X, M>} task
+ * @param {Task.Task<T, X, M>} task
  * @param {(value:T) => U} resolve
  * @param {(error:X) => U} reject
- * @returns {Task.Actor<U, never, M>}
+ * @returns {Task.Task<U, never, M>}
  */
 export function* then(task, resolve, reject) {
   try {
@@ -421,10 +412,10 @@ export const isInstruction = value => {
   }
 }
 
-/** @typedef {'idle'|'active'} TaskStatus */
-/** @type {TaskStatus} */
+/** @type {Task.Status} */
 const IDLE = "idle"
 const ACTIVE = "active"
+const FINISHED = "finished"
 
 /**
  * @template T, X, M
@@ -432,9 +423,19 @@ const ACTIVE = "active"
  */
 class Group {
   /**
-   * @param {Task.Actor<T, X, M>} driver
-   * @param {Task.Actor<T, X, M>[]} [active]
-   * @param {Set<Task.Actor<T, X, M>>} [idle]
+   * @template T, X, M
+   * @param {Task.Task<T, X, M>|Task.Fork<T, X, M>} member
+   * @returns {Task.Group<T, X, M>}
+   */
+  static of(member) {
+    return (
+      /** @type {{group?:Task.TaskGroup<T, X, M>}} */ (member).group || MAIN
+    )
+  }
+  /**
+   * @param {Task.Task<T, X, M>} driver
+   * @param {Task.Task<T, X, M>[]} [active]
+   * @param {Set<Task.Task<T, X, M>>} [idle]
    * @param {Task.Stack<T, X, M>} [stack]
    */
   constructor(
@@ -444,7 +445,7 @@ class Group {
     stack = new Stack(active, idle)
   ) {
     this.driver = driver
-    this.parent = driver.group || MAIN
+    this.parent = Group.of(driver)
     this.stack = stack
     this.id = ++ID
   }
@@ -467,46 +468,30 @@ class Main {
  */
 class Stack {
   /**
-   * @param {Task.Actor<T, X, M>[]} [active]
-   * @param {Set<Task.Actor<T, X, M>>} [idle]
+   * @param {Task.Task<T, X, M>[]} [active]
+   * @param {Set<Task.Task<T, X, M>>} [idle]
    */
   constructor(active = [], idle = new Set()) {
     this.active = active
     this.idle = idle
   }
-}
 
-/**
- * Task to drive group to completion.
- *
- * @template T, X, M
- * @param {Task.Group<T, X, M>} group
- * @returns {Task.Actor<void, X, M>}
- */
-const drive = function* (group) {
-  // Unless group has no work
-  while (true) {
-    const state = yield* step(group)
-    if (!isEmpty(group.stack)) {
-      yield* suspend()
-    } else {
-      return /** @type {T} */ (state.value)
-    }
+  /**
+   *
+   * @param {Task.Stack<unknown, unknown, unknown>} stack
+   * @returns
+   */
+  static size({ active, idle }) {
+    return active.length + idle.size
   }
 }
 
 /**
- * @param {Task.Stack} stack
- */
-const isEmpty = stack => stack.idle.size === 0 && stack.active.length === 0
-
-/**
  * @template T, X, M
- * @param {Task.Actor<T, X, M>} task
+ * @param {Task.Task<T, X, M>} task
  */
 export const enqueue = task => {
-  // If task is not a member of any group assign it to main group
-  let group = task.group || (task.group = MAIN)
+  let group = Group.of(task)
   group.stack.active.push(task)
   group.stack.idle.delete(task)
 
@@ -517,8 +502,6 @@ export const enqueue = task => {
       idle.delete(group.driver)
       active.push(group.driver)
     } else {
-      /* c8 ignore next 5 */
-      console.warn("group driver is not idle", group.driver)
       // if driver was not blocked it must have been unblocked by
       // other task so stop there.
       break
@@ -529,37 +512,42 @@ export const enqueue = task => {
 
   if (MAIN.status === IDLE) {
     MAIN.status = ACTIVE
-    try {
-      for (const message of step(MAIN)) {
+    while (true) {
+      try {
+        for (const _message of step(MAIN)) {
+        }
+        MAIN.status = IDLE
+        break
+      } catch (_error) {
+        // Top level task may crash and throw an error, but given this is a main
+        // group we do not want to interupt other unrelated tasks, which is why
+        // we discard the error and the task that caused it.
+        MAIN.stack.active.shift()
       }
-      MAIN.status = IDLE
-    } catch (error) {
-      // Erroring task may throw another error while it is being resumed to
-      // the error. We catch that error here so we could set the status of
-      // the main back to `IDLE`. We still throw that error so that it can
-      // be surfaced as uncaught exception. Note we use catch as opposed to
-      // finally because later isn't as optimized in some JS engines.
-      MAIN.status = IDLE
-      throw error
     }
   }
 }
 
-export const resume = enqueue
+/**
+ * @template T, X, M
+ * @param {Task.Task<T, X, M>} task
+ */
+export const resume = task => enqueue(task)
+
+/** @type {Task.TaskState<any, any>} */
+const INIT = { done: false, value: CONTEXT }
 
 /**
  * @template T, X, M
- * @param {Task.Group<T, X, M>} context
+ * @param {Task.Group<T, X, M>} group
  */
 
-const step = function* (context) {
-  const { active } = context.stack
+const step = function* (group) {
+  const { active } = group.stack
   let task = active[0]
-  /** @type {Task.ActorState<T, M>} */
-  let state = { done: false, value: CONTEXT }
   while (task) {
-    /** @type {Task.ActorState<T, M>} */
-    state = { done: false, value: CONTEXT }
+    /** @type {Task.TaskState<T, M>} */
+    let state = INIT
     // Keep processing insturctions until task is done, it send suspend request
     // or it's has been removed from the active queue.
     // ⚠️ Group changes require extra care so please make sure to understand
@@ -569,27 +557,23 @@ const step = function* (context) {
     // condition will occur due to task been  driven by multiple concurrent
     // schedulers.
     loop: while (!state.done && task === active[0]) {
-      try {
-        const instruction = state.value
-        switch (instruction) {
-          // if task is suspended we add it to the idle list and break the loop
-          // to move to a next task.
-          case SUSPEND:
-            context.stack.idle.add(task)
-            break loop
-          // if task requested a context (which is usually to suspend itself)
-          // pass back a task reference and continue.
-          case CONTEXT:
-            state = task.next(task)
-            break
-          default:
-            // otherwise task sent a message which we yield to the driver and
-            // continue
-            state = task.next(yield instruction)
-            break
-        }
-      } catch (error) {
-        state = task.throw(/** @type {X} */ (error))
+      const instruction = state.value
+      switch (instruction) {
+        // if task is suspended we add it to the idle list and break the loop
+        // to move to a next task.
+        case SUSPEND:
+          group.stack.idle.add(task)
+          break loop
+        // if task requested a context (which is usually to suspend itself)
+        // pass back a task reference and continue.
+        case CONTEXT:
+          state = task.next(task)
+          break
+        default:
+          // otherwise task sent a message which we yield to the driver and
+          // continue
+          state = task.next(yield instruction)
+          break
       }
     }
 
@@ -597,94 +581,95 @@ const step = function* (context) {
     active.shift()
     task = active[0]
   }
-
-  return state
 }
-
-// /**
-//  * @template T, M, X
-//  * @param {API.Task<T, M, X>} task
-//  * @param {TaskGroup<T, M, X>} group
-//  */
-// const abort = (task, group) => {
-//   if (group.blocked.has(task)) {
-//     group.blocked.delete(task)
-//   }
-//   // @ts-ignore - AbortError is not really an X
-//   task.throw(new AbortError('Task was aborted'))
-// }
 
 /** @type {Task.Main<any, any, any>} */
 const MAIN = new Main()
 let ID = 0
 
 /**
+ * Executes given task concurrently with a current task (task that spawned it).
+ * Spawned task is detached from the task that spawned it and it can outlive it
+ * and / or fail without affecting a task that spawned it. If you need to wait
+ * on concurrent task completion consider using `fork` instead which can be
+ * later `joined`. If you just want a to block on task execution you can just
+ * `yield* work()` directly instead.
+ *
  * @template T, M, X
- * @param {Task.Actor<T, M, X>} task
- * @returns {Task.Task<Task.Actor<T, M, X>, never>}
+ * @param {Task.Task<T, M, X>} task
+ * @returns {Task.Task<void, never>}
  */
-
 export function* spawn(task) {
   enqueue(task)
-
-  return task
 }
 
 /**
- * @template T, M, X
- * @param {Task.Actor<T, M, X>} task
- * @returns {Task.Fork<T, M, X>}
+ * Executes given task concurrently witha current task (the task that initiated
+ * fork). Froked task is detached from the task that created it and it can
+ * outlive it and / or fail without affecting it. You do however get a handle
+ * for the fork which could be used to `join` the task, in which case `joining`
+ * task will block until fork finishes execution.
+ *
+ * This is also a primary interface for executing tasks from the outside of the
+ * task context. Function returns `Fork` which implements `Promise` interface
+ * so it could be awaited. Please note that calling `fork` does not really do
+ * anything, it lazily starts execution when you either `await fork(work())`
+ * from arbitray context or `yield* fork(work())` in anothe task context.
+ *
+ * @template T, X, M
+ * @param {Task.Task<T, X, M>} task
+ * @param {Task.ForkOptions} [options]
+ * @returns {Task.ForkView<T, X, M>}
  */
-export const fork = task => new Fork(task)
-// export function* fork(task) {
-//   enqueue(task)
-//   return task
-// }
+export const fork = (task, options) => new ForkView(task, options)
 
 /**
- * Abort the given task succesfully with a given value.
+ * Exits task succesfully with a given return value.
  *
  * @template T, M, X
- * @param  {Task.Actor<T, M, X>} task
+ * @param  {Task.Task<T, M, X>} handle
  * @param {T} value
  * @returns {Task.Task<void, never>}
  */
-export const exit = (task, value) => conclude(task, { ok: true, value })
+export const exit = (handle, value) => conclude(handle, { ok: true, value })
 
 /**
- * Abort execution of the given actor / task / effect.
+ * Terminates task execution execution. Only takes task that produces no
+ * result, if your task has non `void` return type you should use `exit` instead.
  *
  * @template M, X
- * @param {Task.Actor<void, X, M>} task
+ * @param {Task.Task<void, X, M>} handle
  */
-export const terminate = task => conclude(task, { ok: true, value: undefined })
+export const terminate = handle =>
+  conclude(handle, { ok: true, value: undefined })
 
 /**
- * Aborts given task with an given error.
+ * Aborts given task with an error. Task error type should match provided error.
  *
  * @template T, M, X
- * @param {Task.Actor<T, X, M>} task
+ * @param {Task.Task<T, X, M>} handle
  * @param {X} [error]
  */
-export const abort = (task, error) => conclude(task, { ok: false, error })
+export const abort = (handle, error) => conclude(handle, { ok: false, error })
 
 /**
  * Aborts given task with an given error.
  *
  * @template T, M, X
- * @param {Task.Actor<T, X, M>} task
- * @param {{ok:true, value:T}|{ok:false, error:X}} result
+ * @param {Task.Task<T, X, M>} handle
+ * @param {Task.Result<T, X>} result
  * @returns {Task.Task<void, never>}
  */
-function* conclude(task, result) {
+function* conclude(handle, result) {
   try {
+    const task = handle
     const state = result.ok
       ? task.return(result.value)
       : task.throw(result.error)
 
     if (!state.done) {
       if (state.value === SUSPEND) {
-        const { idle } = (task.group || MAIN).stack
+        const { idle } = Group.of(task).stack
         idle.add(task)
       } else {
         enqueue(task)
@@ -694,48 +679,83 @@ function* conclude(task, result) {
 }
 
 /**
+ * Groups multiple forks togather and joins joins them with current task.
+ *
  * @template T, X, M
- * @param {Task.Actor<T, X, M>[]} tasks
- * @returns {Task.Actor<void, X, M>}
+ * @param {Task.Fork<T, X, M>[]} forks
+ * @returns {Task.Task<void, X, M>}
  */
-export function* group(...tasks) {
+export function* group(forks) {
   const self = yield* current()
   /** @type {Task.TaskGroup<T, X, M>} */
   const group = new Group(self)
+  /** @type {Task.Failure<X>|null} */
+  let failure = null
 
-  for (const task of tasks) {
-    move(task, group)
+  for (const fork of forks) {
+    const { result } = fork
+    if (result) {
+      if (!result.ok && !failure) {
+        failure = result
+      }
+      continue
+    }
+    move(fork, group)
   }
 
-  yield* drive(group)
+  // Keep work looping until there is nom more work to be done
+  try {
+    if (failure) {
+      throw failure.error
+    }
+
+    while (true) {
+      yield* step(group)
+      if (Stack.size(group.stack) > 0) {
+        yield* suspend()
+      } else {
+        break
+      }
+    }
+  } catch (error) {
+    for (const task of group.stack.active) {
+      yield* abort(task, error)
+    }
+
+    for (const task of group.stack.idle) {
+      yield* abort(task, error)
+      enqueue(task)
+    }
+
+    throw error
+  }
 }
 
 /**
  * @template T, X, M
- * @param {Task.Actor<T, X, M>} task
- * @param {Task.TaskGroup<T, X, M>} to
+ * @param {Task.Fork<T, X, M>} fork
+ * @param {Task.TaskGroup<T, X, M>} group
  */
-const move = (task, to) => {
-  const from = task.group || MAIN
-  if (from !== to) {
+const move = (fork, group) => {
+  const from = Group.of(fork)
+  if (from !== group) {
     const { active, idle } = from.stack
-    const target = to.stack
+    const target = group.stack
+    fork.group = group
     // If it is idle just move from one group to the other
     // and update the group task thinks it belongs to.
-    if (idle.has(task)) {
-      idle.delete(task)
-      target.idle.add(task)
-      task.group = to
+    if (idle.has(fork)) {
+      idle.delete(fork)
+      target.idle.add(fork)
     } else {
-      const index = active.indexOf(task)
+      const index = active.indexOf(fork)
       // If task is in the job queue, we move it to a target job queue. Moving
       // top task in the queue requires extra care so it does not end up
       // processed by two groups which would lead to race. For that reason
       // `step` loop checks for group changes on each turn.
       if (index >= 0) {
         active.splice(index, 1)
-        target.active.push(task)
-        task.group = to
+        target.active.push(fork)
       }
       // otherwise task is complete
     }
@@ -744,45 +764,268 @@ const move = (task, to) => {
 
 /**
  * @template T, X, M
+ * @param {Task.Fork<T, X, M>} fork
+ * @returns {Task.Task<T, X, M>}
+ */
+export function* join(fork) {
+  if (!fork.result) {
+    yield* group([fork])
+  }
+
+  const result = /** @type {Task.Result<T, X>} */ (fork.result)
+  if (result.ok) {
+    return result.value
+  } else {
+    throw result.error
+  }
+}
+
+/**
+ * @template T, X
+ */
+class PromiseAdapter {
+  /**
+   * @param {Task.StateHandler<T, X>} handler
+   */
+  constructor(handler) {
+    this.handler = handler
+  }
+
+  /**
+   * @abstract
+   * @type {Task.Result<T, X>|void}
+   */
+  /* c8 ignore next 3 */
+  get result() {
+    return undefined
+  }
+  /**
+   * @type {Promise<T>}
+   */
+  get promise() {
+    const { result } = this
+    const promise =
+      result == null
+        ? new Promise((succeed, fail) => {
+            this.handler.onsuccess = succeed
+            this.handler.onfailure = fail
+          })
+        : result.ok
+        ? Promise.resolve(result.value)
+        : Promise.reject(result.error)
+    Object.defineProperty(this, "promise", { value: promise })
+    return promise
+  }
+
+  /**
+   * @template U, [E=never]
+   * @param {((value:T) => U | PromiseLike<U>)|undefined|null} [onresolve]
+   * @param {((error:X) => E|PromiseLike<E>)|undefined|null} [onreject]
+   */
+  then(onresolve, onreject) {
+    return this.activate().promise.then(onresolve, onreject)
+  }
+  /**
+   * @template [U=never]
+   * @param {((error:X) => U|PromiseLike<U>)|undefined|null} onreject
+   */
+  catch(onreject) {
+    return this.activate().promise.catch(onreject)
+  }
+  /**
+   * @param {(() => void)|undefined|null} [onfinally]
+   */
+  finally(onfinally) {
+    return this.activate().promise.finally(onfinally)
+  }
+  /**
+   * @abstract
+   */
+  /* c8 ignore next 3 */
+  activate() {
+    return this
+  }
+}
+
+/**
+ * @template T, X, M
  * @implements {Task.Fork<T, X, M>}
- * @implements {Promise<T>}
  */
 class Fork {
   /**
-   * @param {Task.Actor<T, X, M>} task
+   * @param {Task.Task<T, X, M>} task
+   * @param {Task.ForkOptions} [options]
+   * @param {Task.StateHandler<T, X>} [handler]
+   * @param {Task.TaskState<T, M>} [state]
    */
-  constructor(task) {
+  constructor(task, options = BLANK, handler = BLANK, state = INIT) {
+    this.id = ++ID
+    this.name = options.name || ""
+    /** @type {Task.Task<T, X, M>} */
     this.task = task
+    this.state = state
+    this.status = IDLE
+    /** @type {Task.Result<T, X>} */
+    this.result
+    this.handler = handler
   }
-  /**
-   * @param {(value:T) => any} [onresolve]
-   * @param {(error:X) => any} [onreject]
-   */
-  then(onresolve, onreject) {
-    const promise = new Promise((resolve, reject) =>
-      enqueue(then(this.task, resolve, reject))
-    )
 
-    return onresolve || onreject ? promise.then(onresolve, onreject) : promise
+  *resume() {
+    resume(this)
+  }
+
+  /**
+   * @returns {Task.Task<T, X, M>}
+   */
+  join() {
+    return join(this)
+  }
+
+  /**
+   * @param {X} error
+   */
+  abort(error) {
+    return abort(this, error)
   }
   /**
-   * @param {(error:X) => any} onreject
+   * @param {T} value
    */
-  catch(onreject) {
-    return this.then().catch(onreject)
-  }
-  /**
-   * @param {() => any} onfinally
-   */
-  finally(onfinally) {
-    return this.then().finally(onfinally)
+  exit(value) {
+    return exit(this, value)
   }
   get [Symbol.toStringTag]() {
     return "Fork"
   }
 
-  *[Symbol.iterator]() {
-    enqueue(this.task)
-    return this.task
+  /**
+   * @returns {Task.Task<T, X, M>}
+   */
+  [Symbol.iterator]() {
+    return this
+  }
+
+  /**
+   * @private
+   * @param {any} error
+   * @returns {never}
+   */
+  panic(error) {
+    this.result = { ok: false, error }
+    this.status = FINISHED
+    const { handler } = this
+    if (handler.onfailure) {
+      handler.onfailure(error)
+    }
+    throw error
+  }
+
+  /**
+   * @private
+   * @param {Task.TaskState<T, M>} state
+   */
+  step(state) {
+    this.state = state
+    if (state.done) {
+      this.result = { ok: true, value: state.value }
+      this.status = FINISHED
+      const { handler } = this
+      if (handler.onsuccess) {
+        handler.onsuccess(state.value)
+      }
+    }
+    return state
+  }
+
+  /**
+   * @param {unknown} value
+   */
+  next(value) {
+    try {
+      return this.step(this.task.next(value))
+    } catch (error) {
+      return this.panic(error)
+    }
+  }
+  /**
+   * @param {T} value
+   */
+  return(value) {
+    try {
+      return this.step(this.task.return(value))
+    } catch (error) {
+      return this.panic(error)
+    }
+  }
+  /**
+   * @param {X} error
+   */
+  throw(error) {
+    try {
+      return this.step(this.task.throw(error))
+    } catch (error) {
+      return this.panic(error)
+    }
   }
 }
+
+/**
+ * @template T, X, M
+ * @implements {Task.ForkView<T, X, M>}
+ * @implements {Promise<T>}
+ * @extends {PromiseAdapter<T, X>}
+ */
+class ForkView extends PromiseAdapter {
+  /**
+   * @param {Task.Task<T, X, M>} task
+   * @param {Task.ForkOptions} [options]
+   */
+  constructor(task, options) {
+    const handler = {}
+    super(handler)
+    this.fork = new Fork(task, options, handler)
+  }
+
+  get result() {
+    return this.fork.result
+  }
+
+  *[Symbol.iterator]() {
+    return this.activate().fork
+  }
+  activate() {
+    enqueue(this.fork)
+    return this
+  }
+
+  get [Symbol.toStringTag]() {
+    return "ForkView"
+  }
+}
+
+// /**
+//  * @extends {Fork<void, never, never>}
+//  */
+
+// class Sleep extends Fork {
+//   /**
+//    * @param {number} duration
+//    */
+//   constructor(duration) {
+//     super(Sleep.perform(duration))
+//   }
+//   /**
+//    * @param {number} duration
+//    */
+//   static *perform(duration) {
+//     const task = yield* current()
+//     const id = setTimeout(enqueue, duration, task)
+
+//     try {
+//       yield* suspend()
+//     } finally {
+//       clearTimeout(id)
+//     }
+//   }
+// }
+
+const BLANK = {}
