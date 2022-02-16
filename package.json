@@ -32,11 +32,17 @@
   ],
   "c8": {
     "exclude": [
-      "src/unixfs.proto.js",
       "test/**",
       "dist/**"
     ],
     "reports-dir": ".coverage"
+  },
+  "nyc": {
+    "exclude": [
+      "test/**",
+      "dist/**"
+    ],
+    "report-dir": ".coverage"
   },
   "devDependencies": {
     "typescript": "^4.5.5",
