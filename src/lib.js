@@ -785,13 +785,11 @@ class PromiseAdapter {
    */
   constructor(handler) {
     this.handler = handler
-  }
-
+  } /* c8 ignore next 7 */
   /**
    * @abstract
    * @type {Task.Result<T, X>|void}
    */
-  /* c8 ignore next 3 */
   get result() {
     return undefined
   }

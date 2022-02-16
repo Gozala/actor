@@ -423,15 +423,15 @@ describe("subtasks", () => {
     function* main() {
       const a = yield* Task.fork(work(1, "A"))
       yield* Task.sleep(2)
-      const b = yield* Task.fork(work(4, "B"))
-      const c = yield* Task.fork(work(7, "C"))
-      const d = yield* Task.fork(work(3, "D", true))
-      const e = yield* Task.fork(work(5, "E"))
+      const b = yield* Task.fork(work(8, "B"))
+      const c = yield* Task.fork(work(14, "C"))
+      const d = yield* Task.fork(work(4, "D", true))
+      const e = yield* Task.fork(work(10, "E"))
 
       try {
         yield* Task.group([a, b, c, d, e])
       } catch (error) {
-        yield* Task.sleep(10)
+        yield* Task.sleep(30)
         return { error }
       }
     }
@@ -443,7 +443,7 @@ describe("subtasks", () => {
     })
 
     assert.deepEqual(
-      output.sort(),
+      [...output].sort(),
       [
         "A on duty",
         "B on duty",
@@ -676,7 +676,7 @@ describe("type level errors", () => {
 
     const error = () => {
       // @ts-expect-error - Tells you to use yield*
-      Task.execute(main())
+      Task.fork(main())
     }
   })
 
@@ -684,7 +684,7 @@ describe("type level errors", () => {
     const worker = function* () {}
     const main = function* () {
       // @ts-expect-error tels you to use worker()
-      yield Task.spawn(worker)
+      yield Task.fork(worker)
     }
   })
 })

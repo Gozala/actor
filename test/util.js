@@ -6,6 +6,7 @@ export { assert }
 export const createLog = () => {
   /** @type {string[]} */
   const output = []
+
   return {
     output,
     /**
