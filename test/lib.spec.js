@@ -1080,9 +1080,44 @@ describe("tag", () => {
 
     assert.deepEqual(output, ["send 1"])
   })
+
+  it("can double tag", async () => {
+    function* fx() {
+      yield* Task.send(1)
+      yield* Task.sleep(1)
+      yield* Task.send(2)
+    }
+
+    const tagged = Task.tag(Task.tag(fx(), "foo"), "bar")
+
+    assert.deepEqual(await inspect(tagged), {
+      ok: true,
+      value: undefined,
+      mail: [
+        { type: "bar", bar: { type: "foo", foo: 1 } },
+        { type: "bar", bar: { type: "foo", foo: 2 } },
+      ],
+    })
+  })
+
+  it("tagging none is noop", async () => {
+    function* fx() {
+      yield* Task.send(1)
+      yield* Task.sleep(1)
+      yield* Task.send(2)
+    }
+
+    const tagged = Task.tag(Task.tag(Task.none(), "foo"), "bar")
+    assert.deepEqual(await inspect(tagged), {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+    assert.equal(tagged, Task.none())
+  })
 })
 
-describe("listen", () => {
+describe("effect", () => {
   it("can listen to several fx", async () => {
     /**
      * @param {number} delay
@@ -1131,6 +1166,21 @@ describe("listen", () => {
       [...expect.map(v => JSON.stringify(v))].sort(),
       "all messages were received"
     )
+  })
+
+  it("can turn task into effect", async () => {
+    function* task() {
+      Task.sleep(1)
+      return "hi"
+    }
+
+    const fx = Task.effect(task())
+
+    assert.deepEqual(await inspect(fx), {
+      ok: true,
+      value: undefined,
+      mail: ["hi"],
+    })
   })
 })
 

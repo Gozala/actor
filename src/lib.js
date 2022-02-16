@@ -3,13 +3,14 @@ import * as Task from "./type.js"
 export * from "./type.js"
 
 /**
- * Turns a task (that never fails) into an effect of it's result.
+ * Turns a task (that never fails or sends messages) into an effect of it's
+ * result.
  *
  * @template T
  * @param {Task.Task<T, never>} task
  * @returns {Task.Effect<T>}
  */
-export const perform = function* (task) {
+export const effect = function* (task) {
   const message = yield* task
   yield* send(message)
 }
@@ -235,7 +236,10 @@ export const listen = function* (source) {
  * @returns {Task.Task<T, X, Tagged<Tag, M>>}
  */
 export const tag = (effect, tag) =>
-  effect instanceof Tagger
+  // @ts-ignore
+  effect === NONE
+    ? NONE
+    : effect instanceof Tagger
     ? new Tagger([...effect.tags, tag], effect.source)
     : new Tagger([tag], effect)
 
@@ -312,14 +316,12 @@ class Tagger {
   }
 }
 
-function* empty() {}
-
 /**
  * Returns empty effect, that is effect that produces no messages.
  *
- * @type {Task.Effect<never>}
+ * @type {() => Task.Effect<never>}
  */
-export const nofx = empty()
+export const none = () => NONE
 
 /**
  * Takes array of tasks and
@@ -411,11 +413,6 @@ export const isInstruction = value => {
       return false
   }
 }
-
-/** @type {Task.Status} */
-const IDLE = "idle"
-const ACTIVE = "active"
-const FINISHED = "finished"
 
 /**
  * @template T, X, M
@@ -534,9 +531,6 @@ export const enqueue = task => {
  */
 export const resume = task => enqueue(task)
 
-/** @type {Task.TaskState<any, any>} */
-const INIT = { done: false, value: CONTEXT }
-
 /**
  * @template T, X, M
  * @param {Task.Group<T, X, M>} group
@@ -582,10 +576,6 @@ const step = function* (group) {
     task = active[0]
   }
 }
-
-/** @type {Task.Main<any, any, any>} */
-const MAIN = new Main()
-let ID = 0
 
 /**
  * Executes given task concurrently with a current task (task that spawned it).
@@ -1002,30 +992,18 @@ class ForkView extends PromiseAdapter {
   }
 }
 
-// /**
-//  * @extends {Fork<void, never, never>}
-//  */
-
-// class Sleep extends Fork {
-//   /**
-//    * @param {number} duration
-//    */
-//   constructor(duration) {
-//     super(Sleep.perform(duration))
-//   }
-//   /**
-//    * @param {number} duration
-//    */
-//   static *perform(duration) {
-//     const task = yield* current()
-//     const id = setTimeout(enqueue, duration, task)
-
-//     try {
-//       yield* suspend()
-//     } finally {
-//       clearTimeout(id)
-//     }
-//   }
-// }
+let ID = 0
+/** @type {Task.Status} */
+const IDLE = "idle"
+const ACTIVE = "active"
+const FINISHED = "finished"
+/** @type {Task.TaskState<any, any>} */
+const INIT = { done: false, value: CONTEXT }
 
 const BLANK = {}
+
+/** @type {Task.Effect<never>} */
+const NONE = (function* none() {})()
+
+/** @type {Task.Main<any, any, any>} */
+const MAIN = new Main()
