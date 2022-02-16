@@ -43,7 +43,7 @@ export type Message<T> = T extends Generator
  *
  * Please note that that TS does not really check exceptions so `Failure`
  * type can not be guaranteed. Yet, we find them more practical that omitting
- * them as TS dose for `Promise` types.
+ * them as TS does for `Promise` types.
  *
  * Our tasks are generators (not the generator functions, but what you get
  * invoking them) that are executed by (library provided) provided scheduler.
