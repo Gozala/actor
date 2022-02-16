@@ -195,8 +195,8 @@ export const send = function* (message) {
  * @example
  * ```js
  * listen({
- *    read: perfom(dbRead),
- *    write: perfrom(dbWrite)
+ *    read: Task.effect(dbRead),
+ *    write: Task.effect(dbWrite)
  * })
  * ```
  *

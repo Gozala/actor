@@ -235,10 +235,10 @@ result.
 Takes several effects and merges them into a single effect of tagged variants so
 that their origin could be identified via `type` field.
 
-```
+```js
 listen({
-   read: perfom(dbRead),
-   write: perfrom(dbWrite)
+  read: effect(dbRead),
+  write: effect(dbWrite),
 })
 ```
 
