@@ -1,6 +1,6 @@
-import * as Task from "./type.js"
+import * as Task from "./task.js"
 
-export * from "./type.js"
+export * from "./task.js"
 
 /**
  * Turns a task (that never fails or sends messages) into an effect of it's
