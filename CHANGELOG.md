@@ -1,5 +1,12 @@
 # Changelog
 
+### [1.0.1](https://www.github.com/Gozala/actor/compare/v1.0.0...v1.0.1) (2022-02-16)
+
+
+### Bug Fixes
+
+* typo ([9db8cd7](https://www.github.com/Gozala/actor/commit/9db8cd70c7fac9d70f574e788a304fe477e5ae39))
+
 ## 1.0.0 (2022-02-16)
 
 
