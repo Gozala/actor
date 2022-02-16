@@ -42,10 +42,10 @@ export function* current() {
  *
  * @example
  * ```js
- * import { context, suspend, resume } from "actor"
+ * import { current, suspend, resume } from "actor"
  * function * sleep(duration) {
  *    // get a reference to this task so we can resume it.
- *    const self = yield * context()
+ *    const self = yield * current()
  *    // resume this task when timeout fires
  *    const id = setTimeout(() => resume(self), duration)
  *    try {
@@ -317,14 +317,20 @@ class Tagger {
 }
 
 /**
- * Returns empty effect, that is effect that produces no messages.
+ * Returns empty `Effect`, that is produces no messages. Kind of like `[]` or
+ * `""` but for effects.
  *
  * @type {() => Task.Effect<never>}
  */
 export const none = () => NONE
 
 /**
- * Takes array of tasks and
+ * Takes iterable of tasks and runs them concurrently, returning array of
+ * results in an order of tasks (not the order of completion). If any of the
+ * tasks fail all the rest are aborted and error is throw into calling task.
+ *
+ * > This is basically equivalent of `Promise.all` except cancelation logic
+ * because tasks unlike promises can be cancelled.
  *
  * @template T, X
  * @param {Iterable<Task.Task<T, X>>} tasks
@@ -594,7 +600,7 @@ export function* spawn(task) {
 }
 
 /**
- * Executes given task concurrently witha current task (the task that initiated
+ * Executes given task concurrently with current task (the task that initiated
  * fork). Froked task is detached from the task that created it and it can
  * outlive it and / or fail without affecting it. You do however get a handle
  * for the fork which could be used to `join` the task, in which case `joining`
@@ -779,13 +785,11 @@ class PromiseAdapter {
    */
   constructor(handler) {
     this.handler = handler
-  }
-
+  } /* c8 ignore next 7 */
   /**
    * @abstract
    * @type {Task.Result<T, X>|void}
    */
-  /* c8 ignore next 3 */
   get result() {
     return undefined
   }
