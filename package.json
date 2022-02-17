@@ -1,7 +1,7 @@
 {
   "name": "actor",
   "version": "1.0.3",
-  "description": ".",
+  "description": " Actor based concurrency primitives for managing effects",
   "keywords": [
     "actor",
     "generators",
