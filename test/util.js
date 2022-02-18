@@ -33,9 +33,10 @@ export const inspector = function* (task) {
   /** @type {M[]} */
   const mail = []
   let input
+  const controller = task[Symbol.iterator]()
   try {
     while (true) {
-      const step = task.next(input)
+      const step = controller.next(input)
       if (step.done) {
         return { ok: true, value: step.value, mail }
       } else {

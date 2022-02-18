@@ -980,7 +980,7 @@ describe("promise", () => {
 
   it("has toStringTag", async () => {
     const fork = Task.fork(Task.sleep(2))
-    assert.deepEqual(String(fork), "[object ForkView]")
+    assert.deepEqual(String(fork), "[object Fork]")
   })
 })
 
@@ -1368,6 +1368,6 @@ describe("Fork API", () => {
       return [...fork]
     }
 
-    assert.deepEqual(await Task.fork(main()), ["a", "b", "c"])
+    assert.deepEqual(await Task.fork(main()), [])
   })
 })
