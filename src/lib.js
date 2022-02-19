@@ -868,6 +868,9 @@ class Future {
 /**
  * @template T, X, M
  * @implements {Task.Fork<T, X, M>}
+ * @implements {Task.Controller<T, X, M>}
+ * @implements {Task.Task<Task.Fork<T, X, M>, never>}
+ * @implements {Task.Future<T, X>}
  * @extends {Future<T, X>}
  */
 class Fork extends Future {
@@ -919,6 +922,10 @@ class Fork extends Future {
   get [Symbol.toStringTag]() {
     return "Fork"
   }
+
+  /**
+   * @returns {Task.Controller<Task.Fork<T, X, M>, never, never>}
+   */
   *[Symbol.iterator]() {
     return this.activate()
   }

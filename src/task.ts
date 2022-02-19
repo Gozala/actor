@@ -59,8 +59,6 @@ export interface Task<
   Message extends unknown = never
 > {
   [Symbol.iterator](): Controller<Success, Failure, Message>
-
-  panic?: (error: Error) => void
 }
 
 export interface Controller<
