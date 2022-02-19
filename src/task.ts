@@ -25,7 +25,7 @@ type CompileError<Reason extends string> = `🚨 ${Reason}`
 /**
  * Helper type to guard users against easy to make mistakes.
  */
-export type Message<T> = T extends Generator
+export type Message<T> = T extends Task<any, any, any>
   ? CompileError<`You must 'yield * fn()' to delegate task instead of 'yield fn()' which yields generator instead`>
   : T extends (...args: any) => Generator
   ? CompileError<`You must yield invoked generator as in 'yield * fn()' instead of yielding generator function`>
@@ -55,18 +55,17 @@ export type Message<T> = T extends Generator
  */
 export interface Task<
   Success extends unknown = unknown,
+  Failure = Error,
+  Message extends unknown = never
+> {
+  [Symbol.iterator](): Controller<Success, Failure, Message>
+}
+
+export interface Controller<
+  Success extends unknown = unknown,
   Failure extends unknown = Error,
   Message extends unknown = never
 > {
-  /*
-extends Generator<
-    Instruction<Message>,
-    Success,
-    Task<Success, Failure, Message> | unknown
-  > 
-*/
-
-  [Symbol.iterator](): Task<Success, Failure, Message>
   throw(error: Failure): TaskState<Success, Message>
   return(value: Success): TaskState<Success, Message>
   next(
@@ -103,7 +102,7 @@ export type Group<T, X, M> = Main<T, X, M> | TaskGroup<T, X, M>
 export interface TaskGroup<T, X, M> {
   id: number
   parent: Group<T, X, M>
-  driver: Task<T, X, M>
+  driver: Controller<T, X, M>
   stack: Stack<T, X, M>
 
   result?: Result<T, X>
@@ -117,16 +116,34 @@ export interface Main<T, X, M> {
 }
 
 export interface Stack<T = unknown, X = unknown, M = unknown> {
-  active: Task<T, X, M>[]
-  idle: Set<Task<T, X, M>>
+  active: Controller<T, X, M>[]
+  idle: Set<Controller<T, X, M>>
+}
+
+/**
+ * Like promise but lazy. It corresponds to a task that is activated when
+ * then method is called.
+ */
+export interface Future<Success, Failure> extends PromiseLike<Success> {
+  then<U = Success, G = never>(
+    handle?: (value: Success) => U | PromiseLike<U>,
+    onrejected?: (error: Failure) => G | PromiseLike<G>
+  ): Promise<U | G>
+
+  catch<U = never>(handle: (error: Failure) => U): Future<Success | U, never>
+
+  finally(handle: () => void): Future<Success, Failure>
 }
 
 export interface Fork<
   Success extends unknown = unknown,
   Failure extends unknown = Error,
   Message extends unknown = never
-> extends Task<Success, Failure, Message> {
+> extends Controller<Success, Failure, Message>,
+    Task<Fork<Success, Failure, Message>, never>,
+    Future<Success, Failure> {
   readonly id: number
+
   group?: void | TaskGroup<Success, Failure, Message>
 
   result?: Result<Success, Failure>
@@ -145,8 +162,4 @@ export interface ForkOptions {
 export interface StateHandler<T, X> {
   onsuccess?: (value: T) => void
   onfailure?: (error: X) => void
-}
-
-export interface ForkView<T, X, M = never> extends Promise<T> {
-  [Symbol.iterator](): Task<Fork<T, X, M>, never>
 }

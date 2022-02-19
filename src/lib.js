@@ -1,5 +1,4 @@
 import * as Task from "./task.js"
-
 export * from "./task.js"
 
 /**
@@ -21,10 +20,10 @@ export const effect = function* (task) {
  * can be used resume execution (see `suspend` code example for more details)
  *
  * @template T, M, X
- * @returns {Task.Task<Task.Task<T, X, M>, never>}
+ * @returns {Task.Task<Task.Controller<T, X, M>, never>}
  */
 export function* current() {
-  return /** @type {Task.Task<T, X, M>} */ (yield CONTEXT)
+  return /** @type {Task.Controller<T, X, M>} */ (yield CURRENT)
 }
 
 /**
@@ -120,7 +119,7 @@ export function* sleep(duration = 0) {
  *
  * @template T, [X=unknown]
  * @param {Task.Await<T>} input
- * @returns {Task.Task<T, X>}
+ * @returns {Task.Task<T, Error>}
  */
 export const wait = function* (input) {
   const task = yield* current()
@@ -248,6 +247,7 @@ export const tag = (effect, tag) =>
  * @template Success, Failure, Message
  *
  * @implements {Task.Task<Success, Failure, Tagged<Tag, Message>>}
+ * @implements {Task.Controller<Success, Failure, Tagged<Tag, Message>>}
  */
 class Tagger {
   /**
@@ -257,9 +257,14 @@ class Tagger {
   constructor(tags, source) {
     this.tags = tags
     this.source = source
+    /** @type {Task.Controller<Success, Failure, Message>} */
+    this.controller
   }
   /* c8 ignore next 3 */
   [Symbol.iterator]() {
+    if (!this.controller) {
+      this.controller = this.source[Symbol.iterator]()
+    }
     return this
   }
   /**
@@ -272,7 +277,7 @@ class Tagger {
     } else {
       switch (state.value) {
         case SUSPEND:
-        case CONTEXT:
+        case CURRENT:
           return /** @type {Task.TaskState<Success, Tagged<Tag, Message>>} */ (
             state
           )
@@ -295,20 +300,20 @@ class Tagger {
    * @param {Task.Instruction<Message>} instruction
    */
   next(instruction) {
-    return this.box(this.source.next(instruction))
+    return this.box(this.controller.next(instruction))
   }
   /**
    *
    * @param {Failure} error
    */
   throw(error) {
-    return this.box(this.source.throw(error))
+    return this.box(this.controller.throw(error))
   }
   /**
    * @param {Success} value
    */
   return(value) {
-    return this.box(this.source.return(value))
+    return this.box(this.controller.return(value))
   }
 
   get [Symbol.toStringTag]() {
@@ -402,23 +407,31 @@ export function* then(task, resolve, reject) {
 }
 
 // Special control instructions recognized by a scheduler.
-const CONTEXT = Symbol("context")
+const CURRENT = Symbol("context")
 const SUSPEND = Symbol("suspend")
-/** @typedef {typeof SUSPEND|typeof CONTEXT} Control */
+/** @typedef {typeof SUSPEND|typeof CURRENT} Control */
 
 /**
- * @param {unknown} value
- * @returns {value is Task.Control}
+ * @template M
+ * @param {Task.Instruction<M>} value
+ * @returns {value is M}
  */
-export const isInstruction = value => {
+export const isMessage = value => {
   switch (value) {
     case SUSPEND:
-    case CONTEXT:
-      return true
-    default:
+    case CURRENT:
       return false
+    default:
+      return true
   }
 }
+
+/**
+ * @template M
+ * @param {Task.Instruction<M>} value
+ * @returns {value is Control}
+ */
+export const isInstruction = value => !isMessage(value)
 
 /**
  * @template T, X, M
@@ -427,7 +440,7 @@ export const isInstruction = value => {
 class Group {
   /**
    * @template T, X, M
-   * @param {Task.Task<T, X, M>|Task.Fork<T, X, M>} member
+   * @param {Task.Controller<T, X, M>|Task.Fork<T, X, M>} member
    * @returns {Task.Group<T, X, M>}
    */
   static of(member) {
@@ -436,9 +449,9 @@ class Group {
     )
   }
   /**
-   * @param {Task.Task<T, X, M>} driver
-   * @param {Task.Task<T, X, M>[]} [active]
-   * @param {Set<Task.Task<T, X, M>>} [idle]
+   * @param {Task.Controller<T, X, M>} driver
+   * @param {Task.Controller<T, X, M>[]} [active]
+   * @param {Set<Task.Controller<T, X, M>>} [idle]
    * @param {Task.Stack<T, X, M>} [stack]
    */
   constructor(
@@ -471,8 +484,8 @@ class Main {
  */
 class Stack {
   /**
-   * @param {Task.Task<T, X, M>[]} [active]
-   * @param {Set<Task.Task<T, X, M>>} [idle]
+   * @param {Task.Controller<T, X, M>[]} [active]
+   * @param {Set<Task.Controller<T, X, M>>} [idle]
    */
   constructor(active = [], idle = new Set()) {
     this.active = active
@@ -490,10 +503,17 @@ class Stack {
 }
 
 /**
- * @template T, X, M
- * @param {Task.Task<T, X, M>} task
+ * Starts a main task.
+ *
+ * @param {Task.Task<void, never>} task
  */
-export const enqueue = task => {
+export const main = task => enqueue(task[Symbol.iterator]())
+
+/**
+ * @template T, X, M
+ * @param {Task.Controller<T, X, M>} task
+ */
+const enqueue = task => {
   let group = Group.of(task)
   group.stack.active.push(task)
   group.stack.idle.delete(task)
@@ -533,7 +553,7 @@ export const enqueue = task => {
 
 /**
  * @template T, X, M
- * @param {Task.Task<T, X, M>} task
+ * @param {Task.Controller<T, X, M>} task
  */
 export const resume = task => enqueue(task)
 
@@ -566,7 +586,7 @@ const step = function* (group) {
           break loop
         // if task requested a context (which is usually to suspend itself)
         // pass back a task reference and continue.
-        case CONTEXT:
+        case CURRENT:
           state = task.next(task)
           break
         default:
@@ -591,12 +611,11 @@ const step = function* (group) {
  * later `joined`. If you just want a to block on task execution you can just
  * `yield* work()` directly instead.
  *
- * @template T, M, X
- * @param {Task.Task<T, M, X>} task
+ * @param {Task.Task<void, never, never>} task
  * @returns {Task.Task<void, never>}
  */
 export function* spawn(task) {
-  enqueue(task)
+  main(task)
 }
 
 /**
@@ -615,15 +634,15 @@ export function* spawn(task) {
  * @template T, X, M
  * @param {Task.Task<T, X, M>} task
  * @param {Task.ForkOptions} [options]
- * @returns {Task.ForkView<T, X, M>}
+ * @returns {Task.Fork<T, X, M>}
  */
-export const fork = (task, options) => new ForkView(task, options)
+export const fork = (task, options) => new Fork(task, options)
 
 /**
  * Exits task succesfully with a given return value.
  *
  * @template T, M, X
- * @param  {Task.Task<T, M, X>} handle
+ * @param  {Task.Controller<T, M, X>} handle
  * @param {T} value
  * @returns {Task.Task<void, never>}
  */
@@ -634,7 +653,7 @@ export const exit = (handle, value) => conclude(handle, { ok: true, value })
  * result, if your task has non `void` return type you should use `exit` instead.
  *
  * @template M, X
- * @param {Task.Task<void, X, M>} handle
+ * @param {Task.Controller<void, X, M>} handle
  */
 export const terminate = handle =>
   conclude(handle, { ok: true, value: undefined })
@@ -643,7 +662,7 @@ export const terminate = handle =>
  * Aborts given task with an error. Task error type should match provided error.
  *
  * @template T, M, X
- * @param {Task.Task<T, X, M>} handle
+ * @param {Task.Controller<T, X, M>} handle
  * @param {X} [error]
  */
 export const abort = (handle, error) => conclude(handle, { ok: false, error })
@@ -652,9 +671,9 @@ export const abort = (handle, error) => conclude(handle, { ok: false, error })
  * Aborts given task with an given error.
  *
  * @template T, M, X
- * @param {Task.Task<T, X, M>} handle
+ * @param {Task.Controller<T, X, M>} handle
  * @param {Task.Result<T, X>} result
- * @returns {Task.Task<void, never>}
+ * @returns {Task.Task<void, never> & Task.Controller<void, never>}
  */
 function* conclude(handle, result) {
   try {
@@ -778,20 +797,19 @@ export function* join(fork) {
 
 /**
  * @template T, X
+ * @implements {Task.Future<T, X>}
  */
-class PromiseAdapter {
+class Future {
   /**
    * @param {Task.StateHandler<T, X>} handler
    */
   constructor(handler) {
     this.handler = handler
-  } /* c8 ignore next 7 */
-  /**
-   * @abstract
-   * @type {Task.Result<T, X>|void}
-   */
-  get result() {
-    return undefined
+    /**
+     * @abstract
+     * @type {Task.Result<T, X>|void}
+     */
+    this.result
   }
   /**
    * @type {Promise<T>}
@@ -815,22 +833,28 @@ class PromiseAdapter {
    * @template U, [E=never]
    * @param {((value:T) => U | PromiseLike<U>)|undefined|null} [onresolve]
    * @param {((error:X) => E|PromiseLike<E>)|undefined|null} [onreject]
+   * @returns {Promise<U|E>}
    */
   then(onresolve, onreject) {
     return this.activate().promise.then(onresolve, onreject)
   }
   /**
    * @template [U=never]
-   * @param {((error:X) => U|PromiseLike<U>)|undefined|null} onreject
+   * @param {(error:X) => U} onreject
    */
   catch(onreject) {
-    return this.activate().promise.catch(onreject)
+    return /** @type {Task.Future<T|U, never>} */ (
+      this.activate().promise.catch(onreject)
+    )
   }
   /**
-   * @param {(() => void)|undefined|null} [onfinally]
+   * @param {() => void} onfinally
+   * @returns {Task.Future<T, X>}
    */
   finally(onfinally) {
-    return this.activate().promise.finally(onfinally)
+    return /** @type {Task.Future<T, X>} */ (
+      this.activate().promise.finally(onfinally)
+    )
   }
   /**
    * @abstract
@@ -844,15 +868,20 @@ class PromiseAdapter {
 /**
  * @template T, X, M
  * @implements {Task.Fork<T, X, M>}
+ * @implements {Task.Controller<T, X, M>}
+ * @implements {Task.Task<Task.Fork<T, X, M>, never>}
+ * @implements {Task.Future<T, X>}
+ * @extends {Future<T, X>}
  */
-class Fork {
+class Fork extends Future {
   /**
    * @param {Task.Task<T, X, M>} task
    * @param {Task.ForkOptions} [options]
    * @param {Task.StateHandler<T, X>} [handler]
    * @param {Task.TaskState<T, M>} [state]
    */
-  constructor(task, options = BLANK, handler = BLANK, state = INIT) {
+  constructor(task, options = BLANK, handler = {}, state = INIT) {
+    super(handler)
     this.id = ++ID
     this.name = options.name || ""
     /** @type {Task.Task<T, X, M>} */
@@ -862,6 +891,9 @@ class Fork {
     /** @type {Task.Result<T, X>} */
     this.result
     this.handler = handler
+
+    /** @type {Task.Controller<T, X, M>} */
+    this.controller
   }
 
   *resume() {
@@ -892,9 +924,15 @@ class Fork {
   }
 
   /**
-   * @returns {Task.Task<T, X, M>}
+   * @returns {Task.Controller<Task.Fork<T, X, M>, never, never>}
    */
-  [Symbol.iterator]() {
+  *[Symbol.iterator]() {
+    return this.activate()
+  }
+
+  activate() {
+    this.controller = this.task[Symbol.iterator]()
+    enqueue(this)
     return this
   }
 
@@ -910,6 +948,7 @@ class Fork {
     if (handler.onfailure) {
       handler.onfailure(error)
     }
+
     throw error
   }
 
@@ -927,6 +966,7 @@ class Fork {
         handler.onsuccess(state.value)
       }
     }
+
     return state
   }
 
@@ -935,7 +975,7 @@ class Fork {
    */
   next(value) {
     try {
-      return this.step(this.task.next(value))
+      return this.step(this.controller.next(value))
     } catch (error) {
       return this.panic(error)
     }
@@ -945,7 +985,7 @@ class Fork {
    */
   return(value) {
     try {
-      return this.step(this.task.return(value))
+      return this.step(this.controller.return(value))
     } catch (error) {
       return this.panic(error)
     }
@@ -955,44 +995,10 @@ class Fork {
    */
   throw(error) {
     try {
-      return this.step(this.task.throw(error))
+      return this.step(this.controller.throw(error))
     } catch (error) {
       return this.panic(error)
     }
-  }
-}
-
-/**
- * @template T, X, M
- * @implements {Task.ForkView<T, X, M>}
- * @implements {Promise<T>}
- * @extends {PromiseAdapter<T, X>}
- */
-class ForkView extends PromiseAdapter {
-  /**
-   * @param {Task.Task<T, X, M>} task
-   * @param {Task.ForkOptions} [options]
-   */
-  constructor(task, options) {
-    const handler = {}
-    super(handler)
-    this.fork = new Fork(task, options, handler)
-  }
-
-  get result() {
-    return this.fork.result
-  }
-
-  *[Symbol.iterator]() {
-    return this.activate().fork
-  }
-  activate() {
-    enqueue(this.fork)
-    return this
-  }
-
-  get [Symbol.toStringTag]() {
-    return "ForkView"
   }
 }
 
@@ -1002,7 +1008,7 @@ const IDLE = "idle"
 const ACTIVE = "active"
 const FINISHED = "finished"
 /** @type {Task.TaskState<any, any>} */
-const INIT = { done: false, value: CONTEXT }
+const INIT = { done: false, value: CURRENT }
 
 const BLANK = {}
 

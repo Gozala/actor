@@ -33,10 +33,10 @@ Task.spawn(work(new URL("https://gozala.io/work/")))
  * @returns {Task.Task<void, never>}
  */
 export function* sleep(duration) {
-  // obtain reference to the current task
-  const task = yield* Task.current()
+  // obtain reference to the current task handle
+  const current = yield* Task.current()
   // set a timer to resume this task after given duratino
-  const id = setTimeout(() => Task.resume(task), duration)
+  const id = setTimeout(() => Task.resume(current), duration)
   // suspend this task up until timer resumes it.
   try {
     yield* Task.suspend()
@@ -69,9 +69,111 @@ Tasks have three type variables:
 
 > Please note that that TS does not really support exception type checking so `X` is not guaranteed. Yet, we find them to be more practical than treating them as `any` like TS does on `Promise`s. This allows combinators to restrict on type of task they work with.
 
-##### `spawn<T, M, X>(task:Task<T, M, X>):Task<void, never>`
+##### `fork<T, M, X>(task:Task<T, M, X>):Fork<T, X, M>`
 
-Executes a given task concurrently to already running tasks. In the following example `main` and `worker` tasks will be interleaved, when `main` task is suspendend waiting on HTTP response, scheduler will switch to `worker` task.
+Creates a new concurrent task. It is a primary way to activate a task from the outside of context and usually is how you'd start your main task. It returns `Fork<T, X, M>` that implements `Future<T, X>` interface, which is like a lazy promise `Promise<T>` so it's result can be `await`-ed.
+
+```js
+// arbitrary program
+export const entry = async () => {
+  // Creates a main task and await for it's result
+  const result = await Task.fork(main)
+  // prints 0
+  console.log(result)
+}
+
+function* main() {
+  console.log("main task is activated")
+  // your main task
+  return 0
+}
+```
+
+You can start new concurrent tasks from other tasks. Note that forked task is detached from from the task that starts it. Fork may outlive it and may fail without affecting that task that started it.
+
+```js
+function* main() {
+  const worker = yield* Task.fork(work())
+  console.log("prints first")
+}
+
+function* work() {
+  console.log("prints second")
+}
+```
+
+##### `join<T, M, X>(fork:Fork<T, M, X>): Task<T, M, X>`
+
+When task forks it gets a reference to a `Fork<T, X, M>` instance, which can be used to `join` forked task back in. Task that executes `join` gets suspended
+until fork is done executing at which point it is resumed with a return value of the forked task. If forked task throws executing `join` will throw that error out. All the messages from the forked task will propagate through
+the task it is joined with.
+
+> You can think of it as fork having it's own `stdout` / `stderr`, but when joined its `stdout` / `stderror` get piped into caller task's `stdout` / `stderr`.
+
+```js
+function* main() {
+  // Start a concurrent task doing some work
+  const worker = yield* Task.fork(work())
+  // Concurrently perfrom some other worke in the main task
+  yield* doSomeOtherWork()
+  try {
+    // Now join worker task back in and get it's return value
+    const value = yield* Task.join(worker)
+    // ...
+  } catch (error) {
+    // If worker crashed it's error is caught here.
+  }
+}
+```
+
+##### `abort<T, M, X>(fork:Fork<T, M, X>, error:X):Task<void, never, never>`
+
+Forked task may be aborted by another task if it has a reference to it.
+
+```js
+function* main() {
+  const worker = yield* Task.fork(work())
+  yield* Task.sleep(10)
+  yield* Task.abort(worker, new Error("die"))
+}
+
+function* work() {
+  const session = new AbortController()
+  try {
+    const response = yield* Task.wait(fetch(URL, session))
+    const text = yield* Task.wait(response.text())
+    // ...
+    localStorage.workStatus = "done"
+  } catch (error) {
+    if (error.message === "die") {
+      // do some clenup logic here
+      localStorage.workStatus = "aborted"
+    }
+  } finally {
+    session.abort()
+  }
+}
+```
+
+##### `exit<T, X, M>(fork:Fork<T, X, M>, value:T):Task<void, never, never>`
+
+Forked task may be exited by another task if it has a referce to it.
+
+```ts
+function* main() {
+  const worker = yield* Task.fork(work())
+  const result = yield* doSomethingConcurrently()
+  // Exit task here in case we''re finished
+  yield* Task.exit(worker, result)
+}
+```
+
+##### `spawn(task:Task<void, never, never>):Task<void, never>`
+
+Starts concurrent "detached" task. This is a more lightweight alternative to `fork` however only tasks that produce no output (return vaule is `undefined`, can not fail and sends no messages) can be spawned. This invariant is enforced through type system and is in place because spawned tasks (unlike forked ones)
+can not be `join`ed, `abort`ed or `exit`ed and there for their errors would end up unhandled.
+
+> Please note: `Task.spawn(work())` does not start a task, it creates one, which if executed will spawn provided task. Unlike `Task.fork` it does not implement `Future<T, X>` interface so awaiting on it will have no effect.
 
 ```js
 function* main() {
@@ -81,79 +183,60 @@ function* main() {
 }
 
 function* work() {
-  // ...
-}
-```
-
-Note that spawned task is detached from the task that spawned it and it can outlive it and / or fail without affecting a task that spawned it.
-
-If you need to wait on concurrent task completion or observe it any way consider using `Task.fork` instead.
-
-##### `fork<T, M, X>(task:Task<T, M, X>):ForkView<Fork<T, X, M>, never>`
-
-Executes given task concurrently with currently running task(s). This is most common way to start tasks from outside of another task (because `ForkView` is both a `Task<T, X, M>` and a `Promise<T>` so it can be awaited).
-
-```js
-// arbitrary program
-export const main = async () => {
-  // Start task and await for it's result
-  const result = await Task.fork(work)
-}
-```
-
-Froked task starts detached from the task that created it and can outlive and / or fail without affecting it.
-
-You do however get a handle for the fork which could be used to `join` the task, in which case "joining" task will be suspended until fork finishes execution. All of the events produces by `joined` task will be produced by a
-a task that joined it.
-
-> For analogy it's like fork starts with a separate `stdout` / `stderrr`, but when joined it's `stdout` / `stderror` are piped to a task calling `join`.
-
-```js
-function* main() {
-  const worker = yield* Task.fork(work())
-  yield* doSomeOtherWork()
   try {
-    return yield* worker.join()
+    // your logic here
   } catch (error) {
-    // do some error handling
+    // not allowed to error so you must handle all the errors
   }
 }
 ```
 
-> `Fork`s have additional methods like `resume`, `abort`, `exit` which are basically bound variants of same named static functions.
+##### `main(task: Task<void, never, never>): void`
 
-##### `enqueue<T, X, M>(task: Task<T, X, M>): void` a.k.a `resume`
+Executes a task that produces no output. This is a more light-weight alternative to `Task.fork` for start a main task from the outside. Just like
+`Task.spawn` provided `task` is not allowed to fail, or send messages and it's return value is `void` which is enforced by type system.
 
-Another way to sechudle concurrent task from outside of the other task. From other tasks you should use `Task.spawn` instead.
+> Please note: While library will do it's best to infer the error types based on tasks you'll be runnig from it. However due to typescript limitations it can not be guaranteed that is because if you `throw new Error()` that is not inferred by type checker.
+>
+> It is authors responsibility to provide type annotations for errors.
 
-Unilke `fork` it returns no handle so can't be aborted or joined.
+```js
+function* main {
+  try {
+    // your programs main loop
+    while (true) {
+
+    }
+  } catch(error) {
+    // not allowed to throw so either recorver or exit
+  }
+}
+
+Task.main(main())
+```
 
 ### `Task<T, X>`
 
-More commonly tasks describe asynchronous operations that may fail, like HTTP request or write to a database. These tasks do not produce any messages which is why they are typed as `Task<T, X, M=never>`.
+More commonly tasks describe asynchronous operations that may fail, like HTTP request or write to a database. These tasks do not produce any messages which is why they are typed as `Task<T, X>`.
 
-These category of tasks seem similar to promises, however there is fundamental difference. `Task` represents anynchronous operation as opposed to resulf of an inflight operation like `Promise`. This is subtle difference, implies that tasks can descirbe effects, yet causing them can de delegated a.k.a **managed effects** which in turn makes it easier to avoid pitfalls of concurrent code by managing all effects in on place.
+These category of tasks seem similar to promises, however there is fundamental difference. `Task` represents anynchronous operation as opposed to resulf of an inflight operation like `Promise`. This subtle difference implies that while tasks describe effects, performing and orchestrating is done elsewhere (usually by central disptach system). This ofter referred to as **managed effects**, as opposed to **side effects** and such systems can usually avoid pitfalls of concurrent code by managing all effects in on place.
 
-##### `current<T, M, X>(): Task<Task<T, X, M>, never>`
+##### `current<T, M, X>(): Task<Controller<T, X, M>, never>`
 
-Gets a handle to the currently running task. Useful when you need needs to
-suspend execution until some outside event occurs, in which case handle
-could be used to resume execution (see `suspend` code example for more details)
+Gets a controller of the currently running task. Controller is usually obtained when task needs to "suspend" execution until some outside event occurs. When that event occurs obtained controller can be used to resume tasks execution (see `suspend` code example for more details)
 
 ##### `suspend(): Task<void, never>`
 
-Suspends the current task (task that invokes it), which can then be resumed from another task or an outside event (e.g. `setTimeout` callback) by calling the `resume` / `enqueue` with an task's handle.
+Suspends the current task, which can later be resumed from another task that hase it's controller or more often from outside event (e.g. `setTimeout` callback) by calling `Task.resume(controller)`.
 
-Calling this in almost all cases is preceeded by call to `current()` in order to obtain a `handle` which can be passed to `resume` function to resume the execution.
-
-> Note: This task never fails, although it may never resume either. However you can utilize `finally` block to do a necessary cleanup in case execution is aborted.
+> Note: This task never fails, although it may never resume either. However you can utilize `finally` block to do a necessary cleanup in case execution is aborted or cancelled.
 
 ```js
 function* sleep(duration) {
   // get a reference to the currently running task, so we can resume it.
-  const current = yield* Task.current()
+  const controller = yield* Task.current()
   // resume this task when timeout fires
-  const id = setTimeout(() => Task.resume(current), duration)
+  const id = setTimeout(() => Task.resume(controller), duration)
   try {
     // suspend this task nothing below this line will run until task is
     // resumed.
@@ -169,7 +252,7 @@ function* sleep(duration) {
 ##### `sleep(duration?: number): Task<void, never>`
 
 Suspends execution for the given duration (in milliseconds), after which
-execution is resumed (unless task was cancelled in the meantime).
+execution is resumed (unless task is cancelled in the meantime).
 
 ```js
 function* work() {
