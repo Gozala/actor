@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://www.github.com/Gozala/actor/compare/v1.0.2...v2.0.0) (2022-02-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* get rid of ForkView (#8)
+
+### Features
+
+* get rid of ForkView ([#8](https://www.github.com/Gozala/actor/issues/8)) ([b0df389](https://www.github.com/Gozala/actor/commit/b0df389cd707104c081f18ec9d511a92ac5a6744))
+
 ### [1.0.2](https://www.github.com/Gozala/actor/compare/v1.0.1...v1.0.2) (2022-02-16)
 
 
