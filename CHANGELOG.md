@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://www.github.com/Gozala/actor/compare/v2.0.0...v2.1.0) (2022-02-20)
+
+
+### Features
+
+* add effects and batch APIs ([#11](https://www.github.com/Gozala/actor/issues/11)) ([a600e65](https://www.github.com/Gozala/actor/commit/a600e651e54d396ce9e5b84094020085714eed9a))
+
 ## [2.0.0](https://www.github.com/Gozala/actor/compare/v1.0.2...v2.0.0) (2022-02-19)
 
 
