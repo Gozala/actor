@@ -59,10 +59,5 @@
     "type": "git",
     "url": "git://github.com/gozala/actor.git"
   },
-  "licenses": [
-    {
-      "type": "MPL 1.1/LGPL 2.1/GPL 2.0",
-      "url": "http://www.mozilla.org/MPL/"
-    }
-  ]
+  "license": "(Apache-2.0 AND MIT)"
 }
