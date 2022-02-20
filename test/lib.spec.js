@@ -1169,17 +1169,45 @@ describe("effect", () => {
   })
 
   it("can turn task into effect", async () => {
-    function* task() {
+    function* work() {
       Task.sleep(1)
       return "hi"
     }
 
-    const fx = Task.effect(task())
+    const fx = Task.effect(work())
 
     assert.deepEqual(await inspect(fx), {
       ok: true,
       value: undefined,
       mail: ["hi"],
+    })
+  })
+
+  it("can turn multiple tasks into effect", async () => {
+    function* fx(msg = "", delay = 1) {
+      yield* Task.sleep(delay)
+      return msg
+    }
+
+    const effect = Task.effects([fx("foo", 5), fx("bar", 1), fx("baz", 2)])
+    assert.deepEqual(await inspect(effect), {
+      ok: true,
+      value: undefined,
+      mail: ["bar", "baz", "foo"],
+    })
+  })
+
+  it("can batch multiple effects", async () => {
+    function* fx(msg = "", delay = 1) {
+      yield* Task.sleep(delay)
+      yield* Task.send(msg)
+    }
+
+    const effect = Task.batch([fx("foo", 5), fx("bar", 1), fx("baz", 2)])
+    assert.deepEqual(await inspect(effect), {
+      ok: true,
+      value: undefined,
+      mail: ["bar", "baz", "foo"],
     })
   })
 })

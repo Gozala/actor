@@ -218,6 +218,41 @@ export const listen = function* (source) {
 }
 
 /**
+ * Takes several tasks and creates an effect of them all.
+ *
+ * @example
+ * ```js
+ * Task.effects([
+ *    dbRead,
+ *    dbWrite
+ * ])
+ * ```
+ *
+ * @template {string} Tag
+ * @template T
+ * @param {Task.Task<T, never>[]} tasks
+ * @returns {Task.Effect<T>}
+ */
+
+export const effects = tasks => batch(tasks.map(effect))
+
+/**
+ * Takes several effects and combines them into a one.
+ *
+ * @template T
+ * @param {Task.Effect<T>[]} effects
+ * @returns {Task.Effect<T>}
+ */
+export function* batch(effects) {
+  const forks = []
+  for (const effect of effects) {
+    forks.push(yield* Task.fork(effect))
+  }
+
+  yield* Task.group(forks)
+}
+
+/**
  * @template {string} Tag
  * @template T
  * @typedef {{type: Tag} & {[K in Tag]: T}} Tagged
