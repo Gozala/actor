@@ -483,6 +483,16 @@ class Group {
       /** @type {{group?:Task.TaskGroup<T, X, M>}} */ (member).group || MAIN
     )
   }
+
+  /**
+   * @template T, X, M
+   * @param {(Task.Controller<T, X, M>|Task.Fork<T, X, M>) & {group?:Task.TaskGroup<T, X, M>}} member
+   * @param {Task.TaskGroup<T, X, M>} group
+   */
+  static enqueue(member, group) {
+    member.group = group
+    group.stack.active.push(member)
+  }
   /**
    * @param {Task.Controller<T, X, M>} driver
    * @param {Task.Controller<T, X, M>[]} [active]
@@ -627,7 +637,9 @@ const step = function* (group) {
         default:
           // otherwise task sent a message which we yield to the driver and
           // continue
-          state = task.next(yield instruction)
+          state = task.next(
+            yield /** @type {M & Task.Message<M>}*/ (instruction)
+          )
           break
       }
     }
@@ -1033,6 +1045,31 @@ class Fork extends Future {
       return this.step(this.controller.throw(error))
     } catch (error) {
       return this.panic(error)
+    }
+  }
+}
+
+/**
+ * @template M
+ * @param {Task.Effect<M>} init
+ * @param {(message:M) => Task.Effect<M>} next
+ * @returns {Task.Task<void, never, never>}
+ */
+export const loop = function* (init, next) {
+  /** @type {Task.Controller<void, never, M>} */
+  const controller = yield* current()
+  const group = new Group(controller)
+  Group.enqueue(init[Symbol.iterator](), group)
+
+  while (true) {
+    for (const message of step(group)) {
+      Group.enqueue(next(message)[Symbol.iterator](), group)
+    }
+
+    if (Stack.size(group.stack) > 0) {
+      yield* suspend()
+    } else {
+      break
     }
   }
 }

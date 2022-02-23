@@ -1210,6 +1210,42 @@ describe("effect", () => {
       mail: ["bar", "baz", "foo"],
     })
   })
+
+  it("can loop", async () => {
+    const { log, output } = createLog()
+    function* step({ n } = { n: 0 }) {
+      log(`<< ${n}`)
+      while (--n > 0) {
+        log(`>> ${n}`)
+        yield* Task.sleep(n)
+        yield* Task.send({ n })
+      }
+    }
+
+    const main = await Task.fork(Task.loop(step({ n: 4 }), step))
+
+    assert.notDeepEqual([...output].sort(), output)
+    assert.deepEqual(
+      [...output].sort(),
+      [
+        "<< 4",
+        ">> 3",
+        ">> 2",
+        ">> 1",
+        "<< 3",
+        ">> 2",
+        ">> 1",
+        "<< 2",
+        ">> 1",
+        "<< 1",
+        "<< 2",
+        ">> 1",
+        "<< 1",
+        "<< 1",
+        "<< 1",
+      ].sort()
+    )
+  })
 })
 
 describe("all operator", () => {
