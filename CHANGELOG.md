@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://www.github.com/Gozala/actor/compare/v2.1.0...v2.2.0) (2022-02-25)
+
+
+### Features
+
+* implement loop API ([#14](https://www.github.com/Gozala/actor/issues/14)) ([cf58c56](https://www.github.com/Gozala/actor/commit/cf58c56b9a2a8b9dbf7cd6f118aeb13ac662b91c))
+
 ## [2.1.0](https://www.github.com/Gozala/actor/compare/v2.0.0...v2.1.0) (2022-02-20)
 
 
