@@ -498,6 +498,18 @@ describe("subtasks", () => {
     await Task.fork(Task.sleep(10))
     assert.deepEqual(output, ["a on duty", "a cancelled"])
   })
+
+  it("can make empty group", async () => {
+    function* main() {
+      return yield* Task.group([])
+    }
+
+    assert.deepEqual(await inspect(main()), {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+  })
 })
 
 describe("concurrency", () => {
@@ -1168,6 +1180,32 @@ describe("effect", () => {
     )
   })
 
+  it("can listen to none", async () => {
+    assert.deepEqual(await inspect(Task.listen({})), {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+  })
+
+  it("can produces no messages on empty tasks", async () => {
+    const { log, output } = createLog()
+    function* work() {
+      console.log("start work")
+      yield* Task.sleep(2)
+      console.log("end work")
+    }
+    const main = Task.listen({
+      none: work(),
+    })
+
+    assert.deepEqual(await inspect(main), {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+  })
+
   it("can turn task into effect", async () => {
     function* work() {
       Task.sleep(1)
@@ -1194,6 +1232,15 @@ describe("effect", () => {
       ok: true,
       value: undefined,
       mail: ["bar", "baz", "foo"],
+    })
+  })
+
+  it("can turn 0 tasks into effect", async () => {
+    const effect = Task.effects([])
+    assert.deepEqual(await inspect(effect), {
+      ok: true,
+      value: undefined,
+      mail: [],
     })
   })
 
@@ -1323,6 +1370,10 @@ describe("all operator", () => {
 
     await Task.fork(Task.sleep(20))
     assert.deepEqual([...output].sort(), ["d", "a", "c"].sort())
+  })
+
+  it("can make all of none", async () => {
+    assert.deepEqual(await Task.fork(Task.all([])), [])
   })
 })
 
