@@ -1247,7 +1247,7 @@ describe("effect", () => {
     )
   })
 
-  it.only("can wait in a loop", async () => {
+  it("can wait in a loop", async () => {
     const { log, output } = createLog()
     const main = Task.loop(Task.send("start"), function* (message) {
       log(`<< ${message}`)
