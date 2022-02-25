@@ -1,5 +1,12 @@
 # Changelog
 
+### [2.2.1](https://www.github.com/Gozala/actor/compare/v2.2.0...v2.2.1) (2022-02-25)
+
+
+### Bug Fixes
+
+* sync wait loop ([#16](https://www.github.com/Gozala/actor/issues/16)) ([9138077](https://www.github.com/Gozala/actor/commit/9138077b99163b459e6ae4294791f1a6953b7658))
+
 ## [2.2.0](https://www.github.com/Gozala/actor/compare/v2.1.0...v2.2.0) (2022-02-25)
 
 
