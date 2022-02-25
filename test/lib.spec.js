@@ -1246,6 +1246,18 @@ describe("effect", () => {
       ].sort()
     )
   })
+
+  it("can wait in a loop", async () => {
+    const { log, output } = createLog()
+    const main = Task.loop(Task.send("start"), function* (message) {
+      log(`<< ${message}`)
+      const result = yield* Task.wait(0)
+      log(`>> ${result}`)
+    })
+
+    assert.deepEqual(await Task.fork(main), undefined)
+    assert.deepEqual(output, ["<< start", ">> 0"])
+  })
 })
 
 describe("all operator", () => {

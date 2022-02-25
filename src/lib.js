@@ -152,10 +152,19 @@ export const wait = function* (input) {
     // conditions can be avoided when values are sometimes promises and other
     // times aren't.
     // Unlike `await` however this will resume in the same tick.
-    enqueue(task)
+    main(wake(task))
     yield* suspend()
     return input
   }
+}
+
+/**
+ * @template T, X, M
+ * @param {Task.Controller<T, X, M>} task
+ * @returns {Task.Task<void, never, never>}
+ */
+function* wake(task) {
+  enqueue(task)
 }
 
 /**
@@ -442,7 +451,7 @@ export function* then(task, resolve, reject) {
 }
 
 // Special control instructions recognized by a scheduler.
-const CURRENT = Symbol("context")
+const CURRENT = Symbol("current")
 const SUSPEND = Symbol("suspend")
 /** @typedef {typeof SUSPEND|typeof CURRENT} Control */
 
@@ -610,6 +619,7 @@ export const resume = task => enqueue(task)
 const step = function* (group) {
   const { active } = group.stack
   let task = active[0]
+  group.stack.idle.delete(task)
   while (task) {
     /** @type {Task.TaskState<T, M>} */
     let state = INIT
@@ -647,6 +657,7 @@ const step = function* (group) {
     // If task is complete, or got suspended we move to a next task
     active.shift()
     task = active[0]
+    group.stack.idle.delete(task)
   }
 }
 
