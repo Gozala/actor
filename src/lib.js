@@ -218,9 +218,10 @@ export const listen = function* (source) {
   const forks = []
   for (const entry of Object.entries(source)) {
     const [name, effect] = /** @type {[Tag, Task.Effect<T>]} */ (entry)
-
-    const fork = yield* Task.fork(tag(effect, name))
-    forks.push(fork)
+    if (effect !== NONE) {
+      const fork = yield* Task.fork(tag(effect, name))
+      forks.push(fork)
+    }
   }
 
   yield* Task.group(forks)
@@ -243,7 +244,8 @@ export const listen = function* (source) {
  * @returns {Task.Effect<T>}
  */
 
-export const effects = tasks => batch(tasks.map(effect))
+export const effects = tasks =>
+  tasks.length > 0 ? batch(tasks.map(effect)) : NONE
 
 /**
  * Takes several effects and combines them into a one.
@@ -418,7 +420,10 @@ export const all = function* (tasks) {
   }
   const results = new Array(count)
 
-  yield* suspend()
+  if (count > 0) {
+    yield* suspend()
+  }
+
   return results
 }
 
@@ -759,6 +764,9 @@ function* conclude(handle, result) {
  * @returns {Task.Task<void, X, M>}
  */
 export function* group(forks) {
+  // Abort eraly if there'se no work todo.
+  if (forks.length === 0) return
+
   const self = yield* current()
   /** @type {Task.TaskGroup<T, X, M>} */
   const group = new Group(self)
