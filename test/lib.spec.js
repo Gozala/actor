@@ -1497,4 +1497,22 @@ describe("Fork API", () => {
 
     assert.deepEqual(await Task.fork(main()), [])
   })
+
+  it("can join non-active fork", async () => {
+    function* work() {
+      yield* Task.send("hi")
+    }
+
+    const worker = Task.fork(work())
+
+    function* main() {
+      yield* Task.join(worker)
+    }
+
+    assert.deepEqual(await inspect(main()), {
+      mail: ["hi"],
+      ok: true,
+      value: undefined,
+    })
+  })
 })
