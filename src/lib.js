@@ -849,6 +849,11 @@ const move = (fork, group) => {
  * @returns {Task.Task<T, X, M>}
  */
 export function* join(fork) {
+  // If fork is still idle activate it.
+  if (fork.status === IDLE) {
+    yield* fork
+  }
+
   if (!fork.result) {
     yield* group([fork])
   }
@@ -998,6 +1003,7 @@ class Fork extends Future {
 
   activate() {
     this.controller = this.task[Symbol.iterator]()
+    this.status = ACTIVE
     enqueue(this)
     return this
   }
