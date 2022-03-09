@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://www.github.com/Gozala/actor/compare/v2.2.1...v2.3.0) (2022-03-09)
+
+
+### Features
+
+* ability to join idle forks ([#20](https://www.github.com/Gozala/actor/issues/20)) ([8d5be1c](https://www.github.com/Gozala/actor/commit/8d5be1c636fd178e86eef11d6444ed5ebbb299ca))
+
 ### [2.2.1](https://www.github.com/Gozala/actor/compare/v2.2.0...v2.2.1) (2022-02-25)
 
 
