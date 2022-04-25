@@ -1516,3 +1516,38 @@ describe("Fork API", () => {
     })
   })
 })
+
+describe("hang", () => {
+  it("will cleanup joined children", async () => {
+    const { log, output } = createLog()
+    function* hang() {
+      try {
+        yield* Task.suspend()
+      } finally {
+        log("cleanup hang")
+      }
+    }
+
+    function* work() {
+      try {
+        const fork = yield* Task.fork(hang())
+        yield* Task.join(fork)
+      } finally {
+        log("cleanup work")
+      }
+    }
+
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep()
+      yield* Task.exit(worker, undefined)
+    }
+
+    assert.deepEqual(await inspect(main()), {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+    assert.deepEqual(output, ["cleanup hang", "cleanup work"])
+  })
+})
