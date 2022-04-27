@@ -55,7 +55,7 @@ export type Message<T> = T extends Task<any, any, any>
  */
 export interface Task<
   Success extends unknown = unknown,
-  Failure = Error,
+  Failure extends unknown = Error,
   Message extends unknown = never
 > {
   [Symbol.iterator](): Controller<Success, Failure, Message>
@@ -68,15 +68,13 @@ export interface Controller<
 > {
   throw(error: Failure): TaskState<Success, Message>
   return(value: Success): TaskState<Success, Message>
-  next(
-    value: Task<Success, Failure, Message> | unknown
-  ): TaskState<Success, Message>
+  next(): TaskState<Success, Message>
 }
 
 export type TaskState<
   Success extends unknown = unknown,
   Message = unknown
-> = IteratorResult<Instruction<Message>, Success>
+> = IteratorResult<Message | undefined, Success>
 
 /**
  * Effect represents potentially asynchronous operation that results in a set

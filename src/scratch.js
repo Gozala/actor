@@ -2,31 +2,21 @@ import * as Task from "./task.js"
 export * from "./task.js"
 
 /**
- * @template X
+ * @template {unknown} X
  * @template M
- * @param {Generator<M|undefined, undefined|void, undefined>} task
+ * @param {Task.Task<void, X, M>} task
  * @param {Task.ForkOptions} [options]
  * @returns {Fork<X, M>}
  */
-export const fork = (task, options = {}) => new Fork(task)
+export const fork = (task, options = {}) => new Fork(task[Symbol.iterator]())
 
 /**
  * @template X
  * @template M
- * @param {Generator<M|undefined, undefined|void, undefined>} task
- */
-
-export const spawn = function* Spawn(task) {
-  enqueue(new Fork(task))
-}
-
-/**
- * @template [X=unknown]
- * @template [M=unknown]
  */
 export class Fork {
   /**
-   * @param {Generator<M|undefined, undefined|void, undefined>} task
+   * @param {Task.Controller<void|undefined, X, M>} task
    */
   constructor(task) {
     this.task = task
@@ -39,6 +29,30 @@ export class Fork {
     this.onfail = null
 
     this.group = this
+
+    /** @type {Set<Fork<X, M>>} */
+    this.linked = new Set()
+
+    this.id = ++ID
+  }
+  /**
+   * @param {Fork<X, M>} task
+   */
+  link(task) {
+    // change group so if task wakes up it can resume a right group
+    // we also no longer need
+    // TODO: I think it would make more sense to allow associating
+    // tasks with multiple groups not just one that way when task
+    // will just notify all the groups it belongs to.
+    dequeue(task).group = this
+    this.linked.add(task)
+  }
+  /**
+   * @param {Fork<X, M>} task
+   */
+  unlink(task) {
+    this.linked.delete(task)
+    task.group = task
   }
   /**
    * @private
@@ -73,6 +87,8 @@ export class Fork {
       } catch (error) {
         return this.panic(error)
       }
+    } else if (this.result?.error) {
+      throw this.result.error
     }
 
     return this.state
@@ -185,27 +201,11 @@ export class Fork {
   }
 }
 
-/**
- * @template X
- * @param {X} error
- */
-function* abort(error, target) {
-  const fork = target || current()
-  fork.throw(error)
-  yield* fork.join()
-}
-
-function* exit(target) {
-  const fork = target || current()
-  try {
-    fork.return()
-  } catch (_) {}
-  yield* fork.join()
-}
-
 /** @type {Fork[]} */
 const QUEUE = []
 const MAIN = { idle: true }
+let ID = 0
+const SUSPEND = undefined
 
 const wake = () => {
   if (MAIN.idle) {
@@ -217,7 +217,7 @@ const wake = () => {
         let done = false
         while (!done) {
           const state = top.next()
-          done = state.done || state.value === undefined
+          done = state.done || state.value === SUSPEND
         }
       } catch (_) {
         // Top level task may crash and throw an error, but given this is a main
@@ -254,15 +254,16 @@ const dequeue = fork => {
 }
 
 /**
- * @param {number} [ms=0]
+ * @param {number} [duration]
+ * @returns {Task.Task<void, never>}
  */
-export function* sleep(ms = 0) {
+export function* sleep(duration = 0) {
   const handle = current()
   let done = false
   const id = setTimeout(() => {
     done = true
     enqueue(handle)
-  }, ms)
+  }, duration)
   try {
     // might be polled multiple times so it needs
     // to keep blocking until done
@@ -319,81 +320,49 @@ export function* wait(input) {
  * @param {Fork<X, M>[]} forks
  */
 export function* join(forks) {
+  /** @type {Fork<X, M>} */
   const group = current()
-  let failed = false
-  /** @type {X|null} */
-  let failure = null
-  /** @type {typeof forks} */
-  const queue = []
+  // Update all handles to point to a new group
   for (const fork of forks) {
-    if (fork.result) {
-      if (!failed && !fork.result.ok) {
-        failed = true
-        failure = fork.result.error
-      }
-    } else {
-      // change group so if task wakes up it can resume a right group
-      // we also no longer need
-      dequeue(fork).group = group
-      queue.push(fork)
-    }
+    fork.group = group
   }
+  return yield* Join(forks)
+}
 
-  if (failed) {
-    failTasks(queue.slice(0), /** @type {X} */ (failure))
+/**
+ * @template T, X, M
+ * @param {Fork<X, M>} [target]
+ * @returns {Task.Task<T, X, M>}
+ */
+export function* exit(target) {
+  const self = current()
+  if (!target) {
+    self.task = Exit(self.task, undefined)
+  } else {
+    const task = Then(Exit(target.task, undefined), self.task)
+    self.task = task
+    target.task = task
   }
-
-  while (queue.length > 0) {
-    // take all items from the queue, that way new things pushed will
-    // not be processed until next awake
-    try {
-      for (const top of queue.slice(0)) {
-        let done = false
-        while (!done) {
-          const state = failed ? top.tryNext() : top.next()
-          if (state.done) {
-            done = true
-          } else if (state.value === undefined) {
-            // if undefined requeue this task so we check on it in next awake
-            done = true
-            queue.push(top)
-          } else {
-            // otherwise just yield value and keep going
-            yield state.value
-          }
-        }
-        queue.shift()
-      }
-
-      // only pause if we have stuff in the queue otherwise we're done.
-      if (queue.length > 0) {
-        yield
-      }
-    } catch (error) {
-      failed = true
-      failure = /** @type {X} */ (error)
-      // remove task that threw an error because it's done
-      queue.shift()
-      failTasks(queue.slice(0), failure)
-    }
-  }
-
-  if (failed) {
-    throw failure
-  }
+  enqueue(self)
+  yield SUSPEND
 }
 
 /**
  * @template X, M
- * @param {Fork<X, M>[]} tasks
- * @param {X} error
+ * @param {X} reason
+ * @param {Fork<X, M>} [target]
  */
-
-const failTasks = (tasks, error) => {
-  // now go over all the tasks in the queue and crash each one
-  for (const top of tasks) {
-    top.tryThrow(error)
+export function* abort(reason, target) {
+  const self = current()
+  if (!target) {
+    self.task = Abort(self.task, reason)
+  } else {
+    const task = Then(Abort(target.task, reason), self.task)
+    self.task = task
+    target.task = task
   }
+  enqueue(self)
+  yield SUSPEND
 }
 
 /**
@@ -425,4 +394,179 @@ export const current = () => {
 
 export const suspend = function* Suspend() {
   yield
+}
+
+/**
+ * @template X, M
+ * @param {Task.Controller<undefined|void, X, M>[]} queue
+ * @returns {Task.Task<undefined|void, X, M> & Task.Controller<undefined|void, X, M>}
+ */
+function* Join(queue) {
+  while (queue.length > 0) {
+    /** @type {X|null} */
+    let failure = null
+    try {
+      while (queue.length > 0) {
+        try {
+          yield* Next(queue)
+          if (queue.length > 0) {
+            yield SUSPEND
+          }
+        } catch (reason) {
+          failure = failure || /** @type {X} */ (reason)
+          // If there was a crash or an abort we need to propagate it to
+          // all the tasks in the queue. So we iterate over each one and
+          // call throw on them. After loop continues as normal because tasks
+          // may catch those errors and continue e.g cleanup.
+          yield* Throw(queue, /** @type {X} */ (reason))
+        }
+      }
+      if (failure) {
+        throw failure
+      }
+    } finally {
+      // task may be exited early we handle this case by exiting all the tasks
+      // in the queue.
+      yield* Return(queue, undefined)
+    }
+  }
+}
+
+/**
+ * @template T, X, M
+ * @param {Task.Controller<T, X, M>[]} queue
+ * @param {X} error
+ */
+function* Throw(queue, error) {
+  for (const top of queue.slice(0)) {
+    try {
+      const state = top.throw(error)
+      // If done we can just remove from the queue and go to next task
+      if (state.done) {
+        queue.shift()
+      }
+      // if task blocks we push it into the end of the queue.
+      else if (state.value === SUSPEND) {
+        queue.shift()
+        queue.push(top)
+      }
+      // otherwise we propagate the message
+      else {
+        yield state.value
+      }
+    } catch (_) {
+      // if task throws as we abort just remove it from the queue and move on.
+      queue.shift()
+    }
+  }
+}
+
+/**
+ * @template T, X, M
+ * @param {Task.Controller<T, X, M>[]} queue
+ * @param {T} value
+ */
+function* Return(queue, value) {
+  for (const top of queue.slice(0)) {
+    try {
+      const state = top.return(value)
+      if (state.done) {
+        queue.shift()
+      } else if (state.value === SUSPEND) {
+        queue.shift()
+        queue.push(top)
+      } else {
+        yield state.value
+      }
+    } catch (reason) {
+      yield* Throw(queue, /** @type {X} */ (reason))
+      throw reason
+    }
+  }
+}
+
+/**
+ * @template T, E, X, M
+ * @param {Task.Task<E, X, M> & Task.Controller<E, X, M>} task
+ * @param {Task.Task<T, X, M> & Task.Controller<T, X, M>} next
+ */
+function* Then(task, next) {
+  let reason = null
+  try {
+    yield* task
+    return yield* next
+  } catch (error) {
+    reason = error
+    try {
+      yield* Abort(task, error)
+    } catch (_) {}
+
+    return yield* Abort(next, error)
+  } finally {
+    if (reason == null) {
+      try {
+        yield* Exit(task, undefined)
+      } catch (error) {
+        return yield* Abort(task, error)
+      }
+      return yield* Exit(next, undefined)
+    }
+  }
+}
+
+/**
+ * @template T, X, M
+ * @param {Task.Task<T, X, M> & Task.Controller<T, X, M>} task
+ * @param {X} reason
+ */
+function* Abort(task, reason) {
+  const state = task.throw(reason)
+  if (!state.done) {
+    yield state.value
+    return yield* task
+  }
+}
+
+/**
+ * @template T, X, M
+ * @param {Task.Controller<T, X, M> & Task.Task<T, X, M>} task
+ * @param {T} value
+ */
+function* Exit(task, value) {
+  const state = task.return(value)
+  if (!state.done) {
+    yield state.value
+    return yield* task
+  }
+}
+
+/**
+ * @template X, M
+ * @param {Task.Controller<undefined|void, X, M>[]} queue
+ */
+function* Next(queue) {
+  for (const top of queue.slice(0)) {
+    while (true) {
+      const state = top.next()
+      if (state.done) {
+        queue.shift()
+        break
+      } else if (state.value === undefined) {
+        queue.shift()
+        queue.push(top)
+        break
+      } else {
+        yield state.value
+      }
+    }
+  }
+}
+/**
+ * @template X, M
+ * @param {Task.Task<undefined, X, M>} task
+ */
+export const spawn = function* Spawn(task) {
+  const parent = current()
+  const child = new Fork(task[Symbol.iterator]())
+  parent.link(child)
 }

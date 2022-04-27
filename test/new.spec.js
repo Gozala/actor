@@ -557,7 +557,12 @@ describe("subtasks", () => {
       mail: [],
     })
     await Task.fork(Task.sleep(10))
-    assert.deepEqual(output, ["a on duty", "a cancelled"])
+    assert.deepEqual(output, [
+      "a on duty",
+      "b on duty",
+      "a cancelled",
+      "b cancelled",
+    ])
   })
 
   it("can make empty group", async () => {
@@ -690,7 +695,7 @@ describe("concurrency", () => {
       mail: [],
     })
   })
-  it("spawn can outlive parent", async () => {
+  it.only("spawn can outlive parent", async () => {
     const { output, log } = createLog()
     const worker = function* () {
       log("start fork")
@@ -828,8 +833,8 @@ describe("can abort", () => {
       "nap",
       "start worker",
       "abort worker",
-      "exit main",
       "can clean up even though aborted",
+      "exit main",
     ]
 
     await Task.fork(main())
@@ -865,8 +870,8 @@ describe("can abort", () => {
       "nap",
       "start worker",
       "abort worker",
-      "exit main",
       "aborted Error: kill",
+      "exit main",
     ]
 
     await Task.fork(main())
@@ -907,8 +912,8 @@ describe("can abort", () => {
       "nap",
       "start worker",
       "abort worker",
-      "exit main",
       "aborted Error: kill",
+      "exit main",
     ]
 
     await Task.fork(main())
@@ -950,8 +955,8 @@ describe("can abort", () => {
       "nap",
       "start worker",
       "abort worker",
-      "exit main",
       "aborted Error: kill",
+      "exit main",
     ]
 
     await Task.fork(main())
@@ -1700,8 +1705,8 @@ describe("can abort", () => {
 //   })
 // })
 
-describe("hang", () => {
-  it.only("will cleanup joined children", async () => {
+describe("cleanup", () => {
+  it("will cleanup joined children", async () => {
     const { log, output } = createLog()
     function* hang() {
       try {
@@ -1723,12 +1728,84 @@ describe("hang", () => {
     function* main() {
       const worker = yield* Task.fork(work())
       yield* Task.sleep()
-      yield* worker.exit()
+      yield* Task.exit(worker)
     }
 
     assert.deepEqual(await inspect(main()), {
       ok: true,
       value: undefined,
+      mail: [],
+    })
+    assert.deepEqual(output, ["cleanup hang", "cleanup work"])
+  })
+
+  it("children can do tasks on exit", async () => {
+    const { log, output } = createLog()
+    function* hang() {
+      try {
+        yield* Task.sleep(21)
+      } finally {
+        log("cleanup hang")
+        Task.sleep(3)
+        log("hang out")
+      }
+    }
+
+    function* work() {
+      try {
+        const fork = yield* Task.fork(hang())
+        yield* fork.join()
+      } finally {
+        log("cleanup work")
+      }
+    }
+
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep()
+      yield* Task.exit(worker)
+    }
+
+    assert.deepEqual(await inspect(main()), {
+      ok: true,
+      value: undefined,
+      mail: [],
+    })
+    assert.deepEqual(output, ["cleanup hang", "hang out", "cleanup work"])
+  })
+
+  it("children can do tasks on exit", async () => {
+    const { log, output } = createLog()
+    const error = new Error("staying alive")
+    function* hang() {
+      try {
+        yield* Task.sleep(21)
+      } finally {
+        log("cleanup hang")
+        throw error
+      }
+    }
+
+    function* work() {
+      try {
+        const fork = yield* Task.fork(hang())
+        yield* fork.join()
+      } finally {
+        log("cleanup work")
+      }
+    }
+
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep()
+      yield* Task.exit(worker)
+    }
+
+    const out = await inspect(main())
+
+    assert.deepEqual(out, {
+      ok: false,
+      error,
       mail: [],
     })
     assert.deepEqual(output, ["cleanup hang", "cleanup work"])
