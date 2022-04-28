@@ -8,11 +8,11 @@ export * from "./task.js"
  * @param {Task.ForkOptions} [options]
  * @returns {Fork<X, M>}
  */
-export const fork = (task, options = {}) => new Fork(task[Symbol.iterator]())
+export const fork = (task, options = {}) => new Group([task[Symbol.iterator]()])
 
 /**
- * @template X
- * @template M
+ * @template [X=unknown]
+ * @template [M=unknown]
  */
 export class Fork {
   /**
@@ -201,6 +201,129 @@ export class Fork {
   }
 }
 
+/**
+ * @template X, M
+ */
+class Group {
+  /**
+   * @param {Task.Controller<undefined|void, X, M>[]} queue
+   */
+  constructor(queue = []) {
+    this.queue = queue
+    this.id = ++ID
+    this.task = Join(queue)
+    /** @type {Task.TaskState<undefined|void, M> & {error?:X}} */
+    this.state = { done: false, value: undefined }
+
+    this.group = this
+  }
+
+  /**
+   * @param {Task.Task<undefined|void, X, M>} task
+   */
+  spawn(task) {
+    this.queue.push(task[Symbol.iterator]())
+  }
+  /**
+   * @template C
+   * @param {C} context
+   * @param {(task:Task.Task<undefined|void, X, M> & Task.Controller<undefined|void, X, M>, context:C) => Task.Controller<undefined|void, X, M> & Task.Task<undefined|void, X, M>} [step]
+   */
+  step(context, step) {
+    const { state, task } = this
+    if (state.done) {
+      if (state.error) {
+        throw state.error
+      } else {
+        return state
+      }
+    } else {
+      if (step) {
+        this.task = step(task, context)
+      }
+      try {
+        this.state = this.task.next()
+        if (this.state.done && this.onsucceed) {
+          this.onsucceed(this.state.value)
+        }
+        return this.state
+      } catch (error) {
+        this.state = {
+          done: true,
+          error: /** @type {X} */ (error),
+          value: undefined,
+        }
+
+        if (this.onfail) {
+          this.onfail(error)
+        }
+
+        throw error
+      }
+    }
+  }
+
+  resume() {
+    enqueue(this)
+  }
+
+  join() {
+    return join([this])
+  }
+  next() {
+    return this.step(undefined)
+  }
+  return() {
+    return this.step(undefined, Exit)
+  }
+  /**
+   * @param {X} error
+   */
+  throw(error) {
+    return this.step(error, Abort)
+  }
+
+  /**
+   * @type {Promise<undefined>}
+   */
+  get promise() {
+    const promise = new Promise((succeed, fail) => {
+      if (this.state.done) {
+        succeed(this.state.value)
+      } else {
+        this.onsucceed = succeed
+        this.onfail = fail
+      }
+    })
+    Object.defineProperty(this, "promise", { value: promise })
+    return promise
+  }
+
+  *[Symbol.iterator]() {
+    enqueue(this)
+    return this
+  }
+
+  /**
+   * @template U, [E=never]
+   * @param {((value:undefined) => U | PromiseLike<U>)|undefined|null} [onresolve]
+   * @param {((error:X) => E|PromiseLike<E>)|undefined|null} [onreject]
+   * @returns {Promise<U|E>}
+   */
+  then(onresolve, onreject) {
+    enqueue(this)
+    return this.promise.then(onresolve, onreject)
+  }
+
+  exit() {
+    return exit(this)
+  }
+
+  abort(reason) {
+    return abort(reason, this)
+  }
+}
+
 /** @type {Fork[]} */
 const QUEUE = []
 const MAIN = { idle: true }
@@ -331,38 +454,39 @@ export function* join(forks) {
 
 /**
  * @template T, X, M
- * @param {Fork<X, M>} [target]
+ * @param {Fork<X, M>} [group]
  * @returns {Task.Task<T, X, M>}
  */
-export function* exit(target) {
-  const self = current()
-  if (!target) {
-    self.task = Exit(self.task, undefined)
+export function* exit(group) {
+  if (!group) {
+    const group = current()
+    group.task = Exit(group.task, undefined)
+    enqueue(group)
+    yield SUSPEND
   } else {
-    const task = Then(Exit(target.task, undefined), self.task)
-    self.task = task
-    target.task = task
+    const task = Exit(group.task, undefined)
+    group.task = task
+
+    return yield* group.task
   }
-  enqueue(self)
-  yield SUSPEND
 }
 
 /**
  * @template X, M
  * @param {X} reason
- * @param {Fork<X, M>} [target]
+ * @param {Fork<X, M>} [group]
  */
-export function* abort(reason, target) {
-  const self = current()
-  if (!target) {
-    self.task = Abort(self.task, reason)
+export function* abort(reason, group) {
+  if (!group) {
+    const group = current()
+    group.task = Abort(group.task, reason)
+    enqueue(group)
+    yield SUSPEND
   } else {
-    const task = Then(Abort(target.task, reason), self.task)
-    self.task = task
-    target.task = task
+    const task = Abort(group.task, reason)
+    group.task = task
+    return yield* group.task
   }
-  enqueue(self)
-  yield SUSPEND
 }
 
 /**
@@ -486,35 +610,6 @@ function* Return(queue, value) {
 }
 
 /**
- * @template T, E, X, M
- * @param {Task.Task<E, X, M> & Task.Controller<E, X, M>} task
- * @param {Task.Task<T, X, M> & Task.Controller<T, X, M>} next
- */
-function* Then(task, next) {
-  let reason = null
-  try {
-    yield* task
-    return yield* next
-  } catch (error) {
-    reason = error
-    try {
-      yield* Abort(task, error)
-    } catch (_) {}
-
-    return yield* Abort(next, error)
-  } finally {
-    if (reason == null) {
-      try {
-        yield* Exit(task, undefined)
-      } catch (error) {
-        return yield* Abort(task, error)
-      }
-      return yield* Exit(next, undefined)
-    }
-  }
-}
-
-/**
  * @template T, X, M
  * @param {Task.Task<T, X, M> & Task.Controller<T, X, M>} task
  * @param {X} reason
@@ -563,10 +658,10 @@ function* Next(queue) {
 }
 /**
  * @template X, M
- * @param {Task.Task<undefined, X, M>} task
+ * @param {Task.Task<undefined|void, X, M>} task
  */
 export const spawn = function* Spawn(task) {
-  const parent = current()
-  const child = new Fork(task[Symbol.iterator]())
-  parent.link(child)
+  const group = current()
+  group.queue.push(task)
+  enqueue(group)
 }

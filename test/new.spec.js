@@ -32,6 +32,7 @@ const inspect = async task => {
     }
   }
 
+  // Note we call then just to start the execution in this tick.
   await Task.fork(inspector()).then()
   return result
 }
@@ -547,7 +548,6 @@ describe("subtasks", () => {
       const f = yield* Task.fork(fail(boom))
       const a = yield* Task.fork(work(2, "a"))
       yield* Task.sleep()
-      assert.deepEqual(f.result, { ok: false, error: boom })
       yield* Task.join([a, Task.fork(work(4, "b")), f, Task.fork(work(2, "c"))])
     }
 
@@ -695,7 +695,7 @@ describe("concurrency", () => {
       mail: [],
     })
   })
-  it.only("spawn can outlive parent", async () => {
+  it("spawn can outlive parent", async () => {
     const { output, log } = createLog()
     const worker = function* () {
       log("start fork")
@@ -739,8 +739,8 @@ describe("concurrency", () => {
     }
 
     assert.deepEqual(await inspect(main()), {
-      ok: true,
-      value: undefined,
+      ok: false,
+      error: boom,
       mail: [],
     })
   })
@@ -843,15 +843,16 @@ describe("can abort", () => {
     assert.deepEqual(output, expect)
   })
 
-  it("can abort with an error", async () => {
+  it.only("can abort with an error", async () => {
     let { output, log } = createLog()
+    const kill = new Error("kill")
     function* main() {
       log("fork worker")
       const fork = yield* Task.fork(worker())
       log("nap")
       yield* Task.sleep(1)
       log("abort worker")
-      yield* fork.abort(new Error("kill"))
+      yield* fork.abort(kill)
       log("exit main")
     }
 
@@ -874,7 +875,11 @@ describe("can abort", () => {
       "exit main",
     ]
 
-    await Task.fork(main())
+    assert.deepEqual(await inspect(main()), {
+      ok: false,
+      error: kill,
+      mail: [],
+    })
     assert.deepEqual(output, expect)
     await Task.fork(Task.sleep(30))
 
@@ -912,11 +917,15 @@ describe("can abort", () => {
       "nap",
       "start worker",
       "abort worker",
-      "aborted Error: kill",
       "exit main",
+      "aborted Error: kill",
     ]
 
-    await Task.fork(main())
+    assert.deepEqual(await inspect(main()), {
+      ok: false,
+      error: kill,
+      mail: [],
+    })
     assert.deepEqual(output, expect)
     await Task.fork(Task.sleep(10))
 
@@ -925,18 +934,18 @@ describe("can abort", () => {
 
   it("can still suspend after aborted", async () => {
     let { output, log } = createLog()
+    const kill = new Error("kill")
     function* main() {
       log("fork worker")
       const fork = yield* Task.fork(worker())
       log("nap")
       yield* Task.sleep(1)
       log("abort worker")
-      yield* fork.abort(new Error("kill"))
+      yield* fork.abort(kill)
       log("exit main")
     }
 
     function* worker() {
-      const task = Task.current()
       try {
         log("start worker")
         yield* Task.sleep(20)
@@ -955,11 +964,15 @@ describe("can abort", () => {
       "nap",
       "start worker",
       "abort worker",
-      "aborted Error: kill",
       "exit main",
+      "aborted Error: kill",
     ]
 
-    await Task.fork(main())
+    assert.deepEqual(await inspect(main()), {
+      ok: false,
+      error: kill,
+      mail: [],
+    })
     assert.deepEqual(output, expect)
     await Task.fork(Task.sleep(10))
 
