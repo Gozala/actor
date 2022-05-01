@@ -1,5 +1,5 @@
 import { assert } from "chai"
-import * as Task from "../src/lib.js"
+import * as Task from "../src/task.js"
 
 export { assert }
 
@@ -21,31 +21,22 @@ export const createLog = () => {
 /**
  * @template T, X, M
  * @param {Task.Task<T, X, M>} task
+ * @returns {Task.Task<{ok:true, value:T, mail:M[]}|{ok:false, error:X, mail:M[]}, never, M>}
  */
-export const inspect = task => Task.fork(inspector(task))
-
-/**
- * @template T, X, M
- * @param {Task.Task<T, X, M>} task
- * @returns {Task.Task<{ ok: boolean, value?: T, error?: X, mail: M[] }, never>}
- */
-export const inspector = function* (task) {
+export const inspect = function* (task) {
   /** @type {M[]} */
   const mail = []
-  let input
   const controller = task[Symbol.iterator]()
   try {
     while (true) {
-      const step = controller.next(input)
+      const step = controller.next()
       if (step.done) {
         return { ok: true, value: step.value, mail }
       } else {
-        const instruction = step.value
-        if (Task.isInstruction(instruction)) {
-          input = yield instruction
-        } else {
-          mail.push(/** @type {M} */ (instruction))
+        if (step.value != undefined) {
+          mail.push(step.value)
         }
+        yield step.value
       }
     }
   } catch (error) {

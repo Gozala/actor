@@ -161,3 +161,53 @@ export interface StateHandler<T, X> {
   onsuccess?: (value: T) => void
   onfailure?: (error: X) => void
 }
+
+export interface Thread<T = unknown, X = unknown, M = unknown>
+  extends Controller<T, X, M>,
+    Task<Thread<T, X, M>, never, never>,
+    Queue<T, X, M> {
+  group: Queue<T, X, M>
+
+  resume(): void
+
+  abort(reason: X): Task<null, never, never>
+
+  then<U = T, G = never>(
+    handle?: (value: T) => U | PromiseLike<U>,
+    onrejected?: (error: X) => G | PromiseLike<G>
+  ): Promise<U | G>
+}
+
+export interface Queue<T, X, M> {
+  enqueue(task: Controller<T, X, M>): void
+}
+
+export type State<T, X, M> = Active<X, M> | Abort<X, M> | Return<T>
+
+export type Abort<X, M> = {
+  ok: false
+  error: X
+}
+
+export type Active<X, M> = {
+  ok: true
+  done: false
+  value: unknown[]
+}
+
+export type Return<T> = {
+  ok: true
+  done: true
+  value: T
+}
+
+export type Join<Tasks> = Tasks extends [
+  Controller<infer T, unknown, unknown>,
+  ...infer Rest
+]
+  ? [T, ...Join<Rest>]
+  : Tasks extends []
+  ? []
+  : never
+
+export interface Run<T, X, M> extends Task<T, X, M>, Controller<T, X, M> {}
