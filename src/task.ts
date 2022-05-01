@@ -135,22 +135,21 @@ export interface Future<Success, Failure> extends PromiseLike<Success> {
 
 export interface Fork<
   Success extends unknown = unknown,
-  Failure extends unknown = Error,
+  Failure extends unknown = unknown,
   Message extends unknown = never
 > extends Controller<Success, Failure, Message>,
-    Task<Fork<Success, Failure, Message>, never>,
+    Task<Fork<Success, Failure, Message>, never, never>,
     Future<Success, Failure> {
   readonly id: number
 
-  group?: void | TaskGroup<Success, Failure, Message>
+  group: Fork<unknown, unknown, unknown>
 
-  result?: Result<Success, Failure>
-  status: Status
-  resume(): Task<void, never>
+  resume(): void
+
+  abort(reason: Failure): Task<null, never, never>
+  exit(value: Success): Task<null, never, never>
+
   join(): Task<Success, Failure, Message>
-
-  abort(error: Failure): Task<void, never>
-  exit(value: Success): Task<void, never>
 }
 
 export interface ForkOptions {
@@ -160,26 +159,6 @@ export interface ForkOptions {
 export interface StateHandler<T, X> {
   onsuccess?: (value: T) => void
   onfailure?: (error: X) => void
-}
-
-export interface Thread<T = unknown, X = unknown, M = unknown>
-  extends Controller<T, X, M>,
-    Task<Thread<T, X, M>, never, never>,
-    Queue<T, X, M> {
-  group: Queue<T, X, M>
-
-  resume(): void
-
-  abort(reason: X): Task<null, never, never>
-
-  then<U = T, G = never>(
-    handle?: (value: T) => U | PromiseLike<U>,
-    onrejected?: (error: X) => G | PromiseLike<G>
-  ): Promise<U | G>
-}
-
-export interface Queue<T, X, M> {
-  enqueue(task: Controller<T, X, M>): void
 }
 
 export type State<T, X, M> = Active<X, M> | Abort<X, M> | Return<T>
