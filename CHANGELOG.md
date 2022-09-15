@@ -1,5 +1,12 @@
 # Changelog
 
+### [2.3.1](https://www.github.com/Gozala/actor/compare/v2.3.0...v2.3.1) (2022-09-15)
+
+
+### Bug Fixes
+
+* circular dependency ([#23](https://www.github.com/Gozala/actor/issues/23)) ([66cc340](https://www.github.com/Gozala/actor/commit/66cc340cb4c1c25e225a0d7e99fc07fc59b93b69))
+
 ## [2.3.0](https://www.github.com/Gozala/actor/compare/v2.2.1...v2.3.0) (2022-03-09)
 
 
