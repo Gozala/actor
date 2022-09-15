@@ -219,12 +219,11 @@ export const listen = function* (source) {
   for (const entry of Object.entries(source)) {
     const [name, effect] = /** @type {[Tag, Task.Effect<T>]} */ (entry)
     if (effect !== NONE) {
-      const fork = yield* Task.fork(tag(effect, name))
-      forks.push(fork)
+      forks.push(yield* fork(tag(effect, name)))
     }
   }
 
-  yield* Task.group(forks)
+  yield* group(forks)
 }
 
 /**
@@ -257,10 +256,10 @@ export const effects = tasks =>
 export function* batch(effects) {
   const forks = []
   for (const effect of effects) {
-    forks.push(yield* Task.fork(effect))
+    forks.push(yield* fork(effect))
   }
 
-  yield* Task.group(forks)
+  yield* group(forks)
 }
 
 /**
@@ -415,8 +414,7 @@ export const all = function* (tasks) {
   let forks = []
   let count = 0
   for (const task of tasks) {
-    const fork = yield* Task.fork(then(task, succeed(count++), fail))
-    forks.push(fork)
+    forks.push(yield* fork(then(task, succeed(count++), fail)))
   }
   const results = new Array(count)
 
