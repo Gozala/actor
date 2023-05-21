@@ -1,202 +1,242 @@
-import * as Task from "./task.js"
+import * as Task from "./api.js"
 export * from "./task.js"
 
 /**
- * @template T
+ * @template {unknown} T
  * @template {unknown} X
- * @template M
+ * @template {{}} M
  * @param {Task.Task<T, X, M>} task
- * @param {Task.ForkOptions} [options]
- * @returns {Task.Fork<T, X, M>}
+ * @returns {Promise<T>}
  */
-export const fork = (task, options = {}) =>
-  new Fork(task[Symbol.iterator](), options)
+export const perform = task =>
+  new Promise((resolve, reject) => {
+    const work = Perform(task, resolve, reject)
+    const workflow = new Workflow(work, { name: "perform" })
+    enqueue(workflow)
+  })
 
 /**
- * @template T, X, M
- * @implements {Task.Fork<T, X, M>}
+ * @template {{}} M
+ * @param {Task.Task<void, never, M>} task
+ * @param {Task.ForkOptions} [options]
+ * @returns {Task.Workflow<void, never, M>}
  */
-class Fork {
+export const spawn = (task, options = { name: "spawn" }) => {
+  const work = new Workflow(Spawn(task), options)
+  enqueue(work)
+  return work
+}
+
+const TICK = Promise.resolve()
+export const tick = function* tick() {
+  yield* wait(TICK)
+}
+
+/**
+ * @template {{}} M
+ * @param {Task.Task<void, never, M>} task
+ * @returns
+ */
+function* Spawn(task) {
+  yield* tick()
+  return yield* task
+}
+
+/**
+ * @template {unknown} T
+ * @template {unknown} X
+ * @template {{}} M
+ * @param {Task.Task<T, X, M>} work
+ * @param {(ok:T) => void} succeed
+ * @param {(error:X) => void} fail
+ */
+function* Perform(work, succeed, fail) {
+  try {
+    const ok = yield* work
+    succeed(ok)
+  } catch (error) {
+    fail(/** @type {X} */ (error))
+  }
+}
+
+/**
+ * @template {unknown} T
+ * @template {unknown} X
+ * @template {{}} M
+ * @param {Task.Task<T, X, M>} task
+ * @param {Task.ForkOptions} [options]
+ * @returns {Task.Workflow<T, X, M>}
+ */
+export const fork = (task, options = { name: "fork" }) => {
+  const work = new Workflow(task[Symbol.iterator](), options)
+  enqueue(work)
+  return work
+}
+
+const UNIT = Object.freeze({})
+const CONTINUE = Object.freeze({ continue: UNIT })
+/** @type {{done: true, value: any}} */
+/**
+ * @template {unknown} T
+ * @template {unknown} X
+ * @template {{}} M
+ * @implements {Task.Workflow<T, X, M>}
+ */
+class Workflow {
   /**
-   * @param {Task.Controller<T, X, M>} task
-   * @param {Task.ForkOptions} options
+   * @param {Task.Controller<T, X, M>} top
+   * @param {Task.ForkOptions} [options]
    */
-  constructor(task, options) {
+  constructor(top, options = {}) {
     this.id = ++ID
-    this.task = task
-    /**
-     * @type {never
-     * |{done:false, value:undefined, aborted?:false}
-     * |{done:true, value:T, aborted?:false}
-     * |{done:true, error:X, aborted: true}
-     * }
-     */
-    this.state = { done: false, value: undefined }
+    this.top = top
+
+    /** @type {Task.Workflow<*, *, *>} */
     this.group = this
     this.options = options
+
+    /** @type {'ok'|'error'|'pending'} */
+    this.status = "pending"
+
+    /** @type {{done:true, value:T}} */
+    this.done
+
+    /** @type {T} */
+    this.ok
+    /** @type {X} */
+    this.error
+
+    /** @type {Array<{throw:X}|{return:T}>} */
+    this.inbox = []
   }
 
-  /**
-   * @returns {Task.Controller<Task.Fork<T, X, M>, never, never>}
-   */
-  *spawn() {
-    // Enqueue this fork, then currently running task and then suspend
-    // current task. This will cause scheduler to run the spawned task
-    // before it continues with the current task. This way we achieve
-    // concurrency. If we were to simply enqueue this fork current task
-    // may finish before this fork is even started, which is not unreasonable
-    // but not what we want.
-    enqueue(this)
-    enqueue(current())
-    yield* suspend()
-    return this
-  }
-
-  [Symbol.iterator]() {
-    return this.spawn()
-  }
-  /**
-   * @returns {Task.TaskState<T, M>}
-   */
-
-  /**
-   * @template C
-   * @param {(task:Task.Controller<T, X, M>, context:C) => Task.TaskState<T, M>} step
-   * @param {C} context
-   */
-  step(step, context) {
-    const state = this.poll()
-    if (state.done) {
-      return state
-    } else {
-      try {
-        const state = step(this.task, context)
-        if (state.done) {
-          this.state = state
-          if (this.onsucceed) {
-            this.onsucceed(state.value)
-          }
-        }
-        return state
-      } catch (error) {
-        this.state = {
-          done: true,
-          aborted: true,
-          error: /** @type {X} */ (error),
-        }
-
-        if (this.onfail) {
-          this.onfail(error)
-        }
-
-        throw error
-      }
+  get state() {
+    const { status, ok, error } = this
+    switch (status) {
+      case "ok":
+        return { ok }
+      case "error":
+        return { error }
+      case "pending":
+        return { pending: UNIT }
     }
+  }
+
+  get root() {
+    /** @type {Task.Workflow<*, *, *>} */
+    let task = this
+    while (task.group != task) {
+      task = task.group
+    }
+    return task
   }
 
   /**
    * @returns {Task.TaskState<T, M>}
    */
-  poll() {
-    const { state } = this
-    if (state.aborted) {
-      throw state.error
-    } else {
-      return state
-    }
-  }
-
   next() {
-    return this.step(task => task.next(), undefined)
-  }
+    const { status, top, inbox } = this
+    switch (status) {
+      case "ok":
+        return { done: true, value: this.ok }
+      case "error":
+        throw this.error
+    }
 
+    try {
+      const command = inbox.shift() || CONTINUE
+      let next
+      if ("throw" in command) {
+        next = top.throw(command.throw)
+      } else if ("return" in command) {
+        next = top.return(command.return)
+      } else {
+        next = top.next()
+      }
+
+      if (next.done) {
+        this.status = "ok"
+        this.ok = next.value
+        return next
+      } else {
+        return next
+      }
+    } catch (cause) {
+      this.status = "error"
+      this.error = /** @type {X} */ (cause)
+
+      throw cause
+    }
+  }
   /**
    * @param {X} error
+   * @returns {Task.TaskState<T, M>}
    */
   throw(error) {
-    return this.step((task, error) => task.throw(error), error)
+    this.inbox.push({ throw: error })
+    return { done: false, value: undefined }
   }
   /**
-   * @param {T} value
+   *
+   * @param {T} ok
    */
-  return(value) {
-    return this.step((task, value) => task.return(value), value)
-  }
-
-  /**
-   * @type {Promise<T>}
-   */
-  get promise() {
-    const promise = new Promise((succeed, fail) => {
-      const state = this.poll()
-      if (state.done) {
-        succeed(state.value)
-      } else {
-        this.onsucceed = succeed
-        this.onfail = fail
-      }
-    })
-    Object.defineProperty(this, "promise", { value: promise })
-    return promise
-  }
-
-  /**
-   * @template U, [E=never]
-   * @param {((value:T) => U | PromiseLike<U>)|undefined|null} [onresolve]
-   * @param {((error:X) => E|PromiseLike<E>)|undefined|null} [onreject]
-   * @returns {Promise<U|E>}
-   */
-  then(onresolve, onreject) {
-    enqueue(this)
-    return this.promise.then(onresolve, onreject)
-  }
-  /**
-   * @template [U=never]
-   * @param {(error:X) => U} onreject
-   */
-  catch(onreject) {
-    return /** @type {Task.Future<T|U, never>} */ (this.then().catch(onreject))
-  }
-  /**
-   * @param {() => void} onfinally
-   * @returns {Task.Future<T, X>}
-   */
-  finally(onfinally) {
-    return /** @type {Task.Future<T, X>} */ (this.then().finally(onfinally))
-  }
-
-  /**
-   * @param {T} value
-   * @returns {Task.Task<T, X, M>}
-   */
-  *exit(value) {
-    const state = this.poll()
-    if (state.done) {
-      return state.value
-    } else {
-      this.task = Return(this.task, value)
-      return yield* this.join()
-    }
-  }
-
-  *join() {
-    const fork = /** @type {Task.Fork<T, X, M>} */ (this)
-    const [value] = yield* join(fork)
-    return value
+  return(ok) {
+    this.inbox.push({ return: ok })
+    return { done: false, value: undefined }
   }
 
   resume() {
     enqueue(this)
+
+    return this
   }
 
   /**
-   * @param {X} reason
    * @returns {Task.Task<T, X, M>}
    */
-  *abort(reason) {
-    const task = Throw(this.task, reason)
-    this.task = task
-    yield* this
+  *join() {
+    this.group = current()
+    yield* { [Symbol.iterator]: () => this }
+  }
+  // /**
+  //  * @param {X} error
+  //  * @returns {Task.Task<T, X, M>}
+  //  */
+  // *throw(error) {
+  //   this.abort(error)
+
+  //   return yield* this.join()
+  // }
+  // /**
+  //  * @param {T} ok
+  //  * @returns {Task.Task<T, X, M>}
+  //  */
+  // *return(ok) {
+  //   this.exit(ok)
+
+  //   return yield* this.join()
+  // }
+  /**
+   * @param {X} error
+   */
+
+  abort(error) {
+    if (this.status === "pending") {
+      this.inbox.push({ throw: error })
+    }
+
+    return this
+  }
+  /**
+   *
+   * @param {T} value
+   */
+  exit(value) {
+    if (this.status === "pending") {
+      this.inbox.push({ return: value })
+    }
+
+    return this
   }
 }
 
@@ -208,19 +248,15 @@ class Main {
 }
 
 let ID = 0
-/** @type {Task.Fork<unknown, unknown, unknown>[]} */
+/** @type {Task.Workflow<*, *, *>[]} */
 const QUEUE = []
 const MAIN = new Main()
-const SUSPEND = undefined
 
 /**
- * @param {Task.Fork<unknown, unknown, unknown>} task
+ * @param {Task.Workflow<*, *, *>} work
  */
-const enqueue = task => {
-  while (task.group != task) {
-    task = task.group
-  }
-  QUEUE.push(task)
+const enqueue = work => {
+  QUEUE.push(work)
   wake()
 }
 
@@ -228,18 +264,21 @@ const wake = () => {
   if (MAIN.idle) {
     MAIN.idle = false
     while (QUEUE.length > 0) {
-      const top = QUEUE[0]
+      const work = QUEUE[0].root
 
       try {
-        const state = top.next()
+        const state = work.next()
+        // unless workflow is complete or has been suspended, we put it back
+        // into the queue.
         if (!state.done && state.value !== SUSPEND) {
-          QUEUE.push(top)
+          QUEUE.push(work)
         }
       } catch (_) {
         // Top level task may crash and throw an error, but given this is a main
         // group we do not want to interrupt other unrelated tasks, which is why
         // we discard the error and the task that caused it.
       }
+
       QUEUE.shift()
     }
     MAIN.idle = true
@@ -261,7 +300,7 @@ function* Sleep(duration = 0) {
   let done = false
   const id = setTimeout(() => {
     done = true
-    enqueue(handle)
+    handle.resume()
   }, duration)
   try {
     // might be polled multiple times so it needs
@@ -322,8 +361,9 @@ function* Wait(input) {
 }
 
 /**
- * @template X, M
- * @template {Task.Fork<unknown, X, M>[]} Tasks
+ * @template X
+ * @template {{}} M
+ * @template {Task.Workflow<unknown, X, M>[]} Tasks
  * @param {Tasks} tasks
  * @return {Task.Task<Task.Join<Tasks>, X, M>}
  */
@@ -350,12 +390,13 @@ export function* join(...tasks) {
 }
 
 /**
- * @template X, M
- * @template {Task.Fork<unknown, X, M>[]} Tasks
+ * @template X
+ * @template {{}} M
+ * @template {Task.Workflow<unknown, X, M>[]} Tasks
  * @param {object} state
- * @param {Task.Run<unknown, X, M>[]} state.index
- * @param {Task.Run<unknown, X, M>[]} state.queue
- * @param {Task.Run<unknown, X, M>[]} state.idle
+ * @param {Task.Workflow<unknown, X, M>[]} state.index
+ * @param {Task.Workflow<unknown, X, M>[]} state.queue
+ * @param {Task.Workflow<unknown, X, M>[]} state.idle
  * @param {unknown[]} state.result
  * @param {typeof OK|X} state.state
  * @return {Task.Task<Task.Join<Tasks>, X, M>}
@@ -379,6 +420,8 @@ function* Join({ index, queue, idle, result, state }) {
           }
         } else if (next.value === SUSPEND) {
           idle.push(task)
+        } else if (next.value === YIELD) {
+          queue.push(task)
         } else {
           queue.push(task)
           yield next.value
@@ -408,15 +451,17 @@ function* Join({ index, queue, idle, result, state }) {
     // all the existing tasks.
     if (state === OK) {
       state = /** @type {X}  */ (reason)
-      for (const task of [...queue.splice(0), ...idle.splice(0)]) {
-        queue.push(Throw(task, state))
+      for (const work of [...queue.splice(0), ...idle.splice(0)]) {
+        work.abort(state)
+        queue.push(work)
       }
     }
   } finally {
     // if we still have tasks then `return` was called or exception was thrown
     // in which case we just go ahead and close things out
-    for (const task of [...queue.splice(0), ...idle.splice(0)]) {
-      queue.push(Return(task, undefined))
+    for (const work of [...queue.splice(0), ...idle.splice(0)]) {
+      work.exit(undefined)
+      queue.push(work)
     }
 
     if (queue.length > 0) {
@@ -431,44 +476,10 @@ function* Join({ index, queue, idle, result, state }) {
   }
 }
 
-/**
- * @template T, X, M
- * @param {Task.Fork<T, X, M>} [fork]
- * @param {T} value
- * @returns {Task.Task<T, X, M>}
- */
-export function* exit(value, fork) {
-  if (fork) {
-    return yield* fork.exit(value)
-  } else {
-    const fork = /** @type {Task.Fork<T, X, M>} */ (current())
-
-    fork.task = Return(fork.task, value)
-    // const fork = current()
-    // fork.return(value)
-    enqueue(fork)
-    yield* suspend()
-    return value
-  }
-}
-
-/**
- * @template T, X, M
- * @param {X} reason
- * @param {Task.Fork<T, X, M>} [fork]
- * @returns {Task.Task<T, X, M>}
- */
-export function* abort(reason, fork) {
-  if (fork) {
-    return yield* fork.abort(reason)
-  } else {
-    const fork = /** @type {Task.Fork<T, X, M>} */ (current())
-    return yield* fork.abort(reason)
-    // enqueue(fork)
-    // yield* suspend()
-    // throw reason
-  }
-}
+const SUSPEND = null
+const YIELD = undefined
+const Yield = Object.freeze({ done: false, value: YIELD })
+const Suspend = Object.freeze({ done: false, value: SUSPEND })
 
 /**
  * @template T
@@ -501,7 +512,7 @@ export const current = () => {
 }
 
 export const suspend = function* Suspend() {
-  yield
+  yield SUSPEND
 }
 
 /**

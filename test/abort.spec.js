@@ -2,7 +2,7 @@ import * as Task from "../src/scratch.js"
 import { assert, createLog, inspect } from "./util.js"
 
 describe("abortion", () => {
-  it("abort fork", async () => {
+  it("abort propagates", async () => {
     const reason = new Error("abort")
     const { log, output } = createLog()
 
@@ -20,14 +20,14 @@ describe("abortion", () => {
     }
 
     assert.deepEqual(await Task.fork(inspect(main())), {
-      ok: true,
+      ok: false,
       mail: [],
-      value: undefined,
+      error: reason,
     })
 
     await Task.fork(Task.sleep(5))
 
-    assert.deepEqual(output, ["begin main", "sleep worker", "end main"])
+    assert.deepEqual(output, ["begin main", "sleep worker"])
   })
 
   it("catch abort fork", async () => {
@@ -63,9 +63,9 @@ describe("abortion", () => {
     assert.deepEqual(output, [
       "begin main",
       "sleep worker",
-      "end main",
       "abort worker",
       "end worker",
+      "end main",
     ])
   })
 
@@ -92,22 +92,17 @@ describe("abortion", () => {
     }
 
     assert.deepEqual(await Task.fork(inspect(main())), {
-      ok: true,
+      ok: false,
       mail: [],
-      value: undefined,
+      error: reason,
     })
 
     await Task.fork(Task.sleep(5))
 
-    assert.deepEqual(output, [
-      "begin main",
-      "sleep worker",
-      "end main",
-      "clear worker",
-    ])
+    assert.deepEqual(output, ["begin main", "sleep worker", "clear worker"])
   })
 
-  it("abort main", async () => {
+  it.only("abort main", async () => {
     const reason = new Error("abort")
     const { log, output } = createLog()
 

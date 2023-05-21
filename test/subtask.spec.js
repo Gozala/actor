@@ -298,6 +298,50 @@ describe("concurrency", () => {
     assert.deepEqual(
       [...mail].sort(),
       [
+        "a#2",
+        "a#3",
+        "a#4",
+        "a#5",
+        "a#6",
+        "b#1",
+        "b#2",
+        "b#3",
+        "b#4",
+        "b#5",
+        "b#6",
+        "b#7",
+      ],
+      "has all the items"
+    )
+    assert.notDeepEqual([...mail].sort(), mail, "messages are not ordered")
+  })
+
+  it("when joined immediately no messages are slipped", async () => {
+    /**
+     * @param {string} name
+     * @param {number} duration
+     * @param {number} count
+     */
+    function* worker(name, duration, count) {
+      let n = 0
+      while (n++ < count) {
+        yield* Task.sleep(duration)
+        yield* Task.send(`${name}#${n}`)
+      }
+    }
+
+    function* main() {
+      const a = yield* Task.fork(worker("a", 5, 6))
+      const b = yield* Task.fork(worker("b", 7, 7))
+
+      yield* Task.join(a, b)
+    }
+
+    const result = await Task.fork(inspect(main()))
+    const { mail } = result
+    assert.deepEqual(
+      [...mail].sort(),
+      [
         "a#1",
         "a#2",
         "a#3",
@@ -354,12 +398,12 @@ describe("concurrency", () => {
       [...output],
       [
         "Spawn A",
-        "Sleep",
         "> A sleep",
+        "Sleep",
         "< A wake",
         "Spawn B",
-        "Join",
         "> B sleep",
+        "Join",
         "< B wake",
         "Nap",
         "Exit",
@@ -387,7 +431,8 @@ describe("concurrency", () => {
       mail: [],
     })
   })
-  it("spawn can outlive parent", async () => {
+
+  it("fork can outlive parent", async () => {
     const { output, log } = createLog()
     const worker = function* () {
       log("start fork")
@@ -397,24 +442,23 @@ describe("concurrency", () => {
 
     const main = function* () {
       log("start main")
-      yield* Task.spawn(worker())
+      yield* Task.fork(worker())
       log("exit main")
     }
 
     await Task.fork(main())
-    // assert.deepEqual(output, ["start main", "exit main", "start fork"])
 
     await Task.fork(Task.sleep(20))
 
     assert.deepEqual(output, [
       "start main",
-      "exit main",
       "start fork",
+      "exit main",
       "exit fork",
     ])
   })
 
-  it("throws on exit", async () => {
+  it("throws on abort does not affect parent", async () => {
     const boom = new Error("boom")
     function* work() {
       try {
@@ -433,6 +477,29 @@ describe("concurrency", () => {
     assert.deepEqual(await Task.fork(inspect(main())), {
       ok: false,
       error: boom,
+      mail: [],
+    })
+  })
+
+  it("fork abort", async () => {
+    const boom = new Error("boom")
+    function* work() {
+      try {
+        yield* Task.sleep(5)
+      } finally {
+        throw boom
+      }
+    }
+
+    function* main() {
+      const worker = yield* Task.fork(work())
+      yield* Task.sleep()
+      yield* Task.fork(worker.exit())
+    }
+
+    assert.deepEqual(await Task.fork(inspect(main())), {
+      ok: true,
+      value: undefined,
       mail: [],
     })
   })

@@ -75,11 +75,7 @@ describe("wait", () => {
       }
     }
 
-    assert.deepEqual(await Task.fork(inspect(main())), {
-      ok: true,
-      mail: [],
-      value: boom,
-    })
+    assert.deepEqual(await Task.fork(main()).catch(e => e), boom)
   })
 
   it("can intercept thrown errors", async () => {
@@ -92,11 +88,7 @@ describe("wait", () => {
       fail()
     }
 
-    assert.deepEqual(await Task.fork(inspect(main())), {
-      ok: false,
-      mail: [],
-      error: boom,
-    })
+    assert.deepEqual(await Task.fork(main()).catch(error => error), boom)
   })
 
   it("can catch thrown errors", async () => {
@@ -109,14 +101,12 @@ describe("wait", () => {
       try {
         fail()
       } catch (error) {
-        return error
+        return { caught: error }
       }
     }
 
-    assert.deepEqual(await Task.fork(inspect(main())), {
-      ok: true,
-      mail: [],
-      value: boom,
+    assert.deepEqual(await Task.fork(main()), {
+      caught: boom,
     })
   })
 
@@ -132,11 +122,7 @@ describe("wait", () => {
       }
     }
 
-    assert.deepEqual(await Task.fork(inspect(main())), {
-      ok: false,
-      mail: [],
-      error: boom,
-    })
+    assert.deepEqual(await Task.fork(main()).catch(e => e), boom)
 
     assert.equal(finalized, true)
   })

@@ -19,11 +19,10 @@ export const effect = function* (task) {
  * suspend execution until some outside event occurs, in which case handle
  * can be used resume execution (see `suspend` code example for more details)
  *
- * @template T, M, X
- * @returns {Task.Task<Task.Controller<T, X, M>, never>}
+ * @returns {Task.Task<Task.Handle, never>}
  */
 export function* current() {
-  return /** @type {Task.Controller<T, X, M>} */ (yield CURRENT)
+  return yield CURRENT
 }
 
 /**
@@ -31,7 +30,7 @@ export function* current() {
  * resumed from another task or an outside event (e.g. `setTimeout` callback)
  * by calling the `resume` with an task's handle.
  *
- * Calling this in almost all cases is preceeded by call to `current()` in
+ * Calling this in almost all cases is preceded by call to `current()` in
  * order to obtain a `handle` which can be passed to `resume` function
  * to resume the execution.
  *
@@ -82,7 +81,7 @@ export const suspend = function* () {
  * @returns {Task.Task<void, never>}
  */
 export function* sleep(duration = 0) {
-  const task = yield* current()
+  const task = yield
   const id = setTimeout(enqueue, duration, task)
 
   try {
@@ -105,7 +104,7 @@ export function* sleep(duration = 0) {
  * Please note: This that execution is suspended even if given value is not a
  * promise, however scheduler will still resume it in the same tick of the event
  * loop after, just processing other scheduled tasks. This avoids problematic
- * race condititions that can otherwise occur when values are sometimes promises
+ * race conditions that can otherwise occur when values are sometimes promises
  * and other times are not.
  *
  * @example
@@ -147,7 +146,7 @@ export const wait = function* (input) {
       return /** @type {T} */ (output)
     }
   } else {
-    // This may seem redundunt but it is not, by enqueuing this task we allow
+    // This may seem redundant but it is not, by enqueuing this task we allow
     // scheduler to perform other queued tasks first. This way many race
     // conditions can be avoided when values are sometimes promises and other
     // times aren't.
@@ -159,12 +158,11 @@ export const wait = function* (input) {
 }
 
 /**
- * @template T, X, M
- * @param {Task.Controller<T, X, M>} task
+ * @param {Task.Handle} handle
  * @returns {Task.Task<void, never, never>}
  */
-function* wake(task) {
-  enqueue(task)
+function* wake(handle) {
+  enqueue(handle)
 }
 
 /**
@@ -343,10 +341,10 @@ class Tagger {
   }
   /**
    *
-   * @param {Task.Instruction<Message>} instruction
+   * @param {Task.Handle} handle
    */
-  next(instruction) {
-    return this.box(this.controller.next(instruction))
+  next(handle) {
+    return this.box(this.controller.next(handle))
   }
   /**
    *
@@ -458,7 +456,10 @@ export function* then(task, resolve, reject) {
 // Special control instructions recognized by a scheduler.
 const CURRENT = Symbol("current")
 const SUSPEND = Symbol("suspend")
-/** @typedef {typeof SUSPEND|typeof CURRENT} Control */
+/**
+ * @typedef {typeof SUSPEND} Suspend
+ * @typedef {typeof SUSPEND|typeof CURRENT} Control
+ */
 
 /**
  * @template M
@@ -508,19 +509,20 @@ class Group {
     group.stack.active.push(member)
   }
   /**
-   * @param {Task.Controller<T, X, M>} driver
+   * @param {Task.Handle} handle
    * @param {Task.Controller<T, X, M>[]} [active]
    * @param {Set<Task.Controller<T, X, M>>} [idle]
    * @param {Task.Stack<T, X, M>} [stack]
    */
   constructor(
-    driver,
+    handle,
     active = [],
     idle = new Set(),
     stack = new Stack(active, idle)
   ) {
-    this.driver = driver
-    this.parent = Group.of(driver)
+    this.driver = handle
+    const task = /** @type {Task.Controller<T, X, M>} */ (handle)
+    this.parent = Group.of(task)
     this.stack = stack
     this.id = ++ID
   }
@@ -570,9 +572,10 @@ export const main = task => enqueue(task[Symbol.iterator]())
 
 /**
  * @template T, X, M
- * @param {Task.Controller<T, X, M>} task
+ * @param {Task.Handle} handle
  */
-const enqueue = task => {
+const enqueue = handle => {
+  const task = /** @type {Task.Controller} */ (handle)
   let group = Group.of(task)
   group.stack.active.push(task)
   group.stack.idle.delete(task)
@@ -596,13 +599,13 @@ const enqueue = task => {
     MAIN.status = ACTIVE
     while (true) {
       try {
-        for (const _message of step(MAIN)) {
-        }
+        const loop = run(MAIN)
+        while (!loop.next().done) {}
         MAIN.status = IDLE
         break
       } catch (_error) {
         // Top level task may crash and throw an error, but given this is a main
-        // group we do not want to interupt other unrelated tasks, which is why
+        // group we do not want to interrupt other unrelated tasks, which is why
         // we discard the error and the task that caused it.
         MAIN.stack.active.shift()
       }
@@ -621,20 +624,20 @@ export const resume = task => enqueue(task)
  * @param {Task.Group<T, X, M>} group
  */
 
-const step = function* (group) {
+const run = function* (group) {
   const { active } = group.stack
   let task = active[0]
   group.stack.idle.delete(task)
   while (task) {
     /** @type {Task.TaskState<T, M>} */
     let state = INIT
-    // Keep processing insturctions until task is done, it send suspend request
+    // Keep processing instructions until task is done, it send suspend request
     // or it's has been removed from the active queue.
     // ⚠️ Group changes require extra care so please make sure to understand
     // the detail here. It occurs when spawned task(s) are joined into a group
     // which will change the task driver, that is when `task === active[0]` will
-    // became false and need to to drop the task immediately otherwise race
-    // condition will occur due to task been  driven by multiple concurrent
+    // became false and we need to drop the task immediately otherwise race
+    // condition will occur due to task been driven by multiple concurrent
     // schedulers.
     loop: while (!state.done && task === active[0]) {
       const instruction = state.value
@@ -683,7 +686,7 @@ export function* spawn(task) {
 
 /**
  * Executes given task concurrently with current task (the task that initiated
- * fork). Froked task is detached from the task that created it and it can
+ * fork). Forked task is detached from the task that created it and it can
  * outlive it and / or fail without affecting it. You do however get a handle
  * for the fork which could be used to `join` the task, in which case `joining`
  * task will block until fork finishes execution.
@@ -692,7 +695,7 @@ export function* spawn(task) {
  * task context. Function returns `Fork` which implements `Promise` interface
  * so it could be awaited. Please note that calling `fork` does not really do
  * anything, it lazily starts execution when you either `await fork(work())`
- * from arbitray context or `yield* fork(work())` in anothe task context.
+ * from arbitrary context or `yield* fork(work())` in another task context.
  *
  * @template T, X, M
  * @param {Task.Task<T, X, M>} task
@@ -702,7 +705,7 @@ export function* spawn(task) {
 export const fork = (task, options) => new Fork(task, options)
 
 /**
- * Exits task succesfully with a given return value.
+ * Exits task successfully with a given return value.
  *
  * @template T, M, X
  * @param  {Task.Controller<T, M, X>} handle
@@ -757,14 +760,14 @@ function* conclude(handle, result) {
 }
 
 /**
- * Groups multiple forks togather and joins joins them with current task.
+ * Groups multiple forks together and joins joins them with current task.
  *
  * @template T, X, M
  * @param {Task.Fork<T, X, M>[]} forks
  * @returns {Task.Task<void, X, M>}
  */
 export function* group(forks) {
-  // Abort eraly if there'se no work todo.
+  // Abort early if there'se no work todo.
   if (forks.length === 0) return
 
   const self = yield* current()
@@ -791,7 +794,7 @@ export function* group(forks) {
     }
 
     while (true) {
-      yield* step(group)
+      yield* run(group)
       if (Stack.size(group.stack) > 0) {
         yield* suspend()
       } else {
@@ -1081,13 +1084,12 @@ class Fork extends Future {
  * @returns {Task.Task<void, never, never>}
  */
 export const loop = function* (init, next) {
-  /** @type {Task.Controller<void, never, M>} */
-  const controller = yield* current()
-  const group = new Group(controller)
+  const handle = yield* current()
+  const group = new Group(handle)
   Group.enqueue(init[Symbol.iterator](), group)
 
   while (true) {
-    for (const message of step(group)) {
+    for (const message of run(group)) {
       Group.enqueue(next(message)[Symbol.iterator](), group)
     }
 

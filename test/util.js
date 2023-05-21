@@ -19,19 +19,24 @@ export const createLog = () => {
 }
 
 /**
- * @template T, X, M
+ * @template T, X
+ * @template {{}} M
  * @param {Task.Task<T, X, M>} task
  * @returns {Task.Task<{ok:true, value:T, mail:M[]}|{ok:false, error:X, mail:M[]}, never, M>}
  */
 export const inspect = function* (task) {
   /** @type {M[]} */
   const mail = []
+  /** @type {{ok:T, error?:undefined}|{ok?:undefined, error:X}|null} */
+  let result = null
+
   const controller = task[Symbol.iterator]()
   try {
     while (true) {
       const step = controller.next()
       if (step.done) {
-        return { ok: true, value: step.value, mail }
+        result = { ok: step.value }
+        break
       } else {
         if (step.value != undefined) {
           mail.push(step.value)
@@ -39,7 +44,24 @@ export const inspect = function* (task) {
         yield step.value
       }
     }
-  } catch (error) {
-    return { ok: false, error: /** @type {X} */ (error), mail }
+  } catch (cause) {
+    result = { error: /** @type {X} */ (cause) }
+  } finally {
+    const output =
+      result == null
+        ? {
+            ok: /** @type {const} */ (false),
+            error: /** @type {X} */ (new Error("Task was interrupted")),
+            mail,
+          }
+        : "ok" in result
+        ? {
+            ok: /** @type {const} */ (true),
+            value: /** @type {T} */ (result.ok),
+            mail,
+          }
+        : { ok: /** @type {const} */ (false), error: result.error, mail }
+
+    return output
   }
 }

@@ -1,5 +1,6 @@
 export * from "./lib.js"
 
+import { Variant, Workflow } from "./api.js"
 import type { Control } from "./lib.js"
 
 export type Instruction<T> = Message<T> | Control
@@ -39,7 +40,7 @@ export type Message<T> = T extends Task<any, any, any>
  * Tasks have three type variables first two describing result of the
  * computation `Success` that corresponds to return type and `Failure`
  * describing an error type (caused by thrown exceptions). Third type
- * varibale `Message` describes type of messages this task may produce.
+ * variable `Message` describes type of messages this task may produce.
  *
  * Please note that that TS does not really check exceptions so `Failure`
  * type can not be guaranteed. Yet, we find them more practical that omitting
@@ -56,7 +57,7 @@ export type Message<T> = T extends Task<any, any, any>
 export interface Task<
   Success extends unknown = unknown,
   Failure extends unknown = Error,
-  Message extends unknown = never
+  Message extends {} = never
 > {
   [Symbol.iterator](): Controller<Success, Failure, Message>
 }
@@ -64,23 +65,27 @@ export interface Task<
 export interface Controller<
   Success extends unknown = unknown,
   Failure extends unknown = Error,
-  Message extends unknown = never
+  Message extends {} = never
 > {
   throw(error: Failure): TaskState<Success, Message>
   return(value: Success): TaskState<Success, Message>
   next(): TaskState<Success, Message>
 }
 
+export type Yield = undefined
+export type Suspend = null
+export type Command<Message> = Message | Suspend | Yield
+
 export type TaskState<
   Success extends unknown = unknown,
-  Message = unknown
-> = IteratorResult<Message | undefined, Success>
+  Message extends {} = {}
+> = IteratorResult<Yield | Suspend | Message, Success>
 
 /**
  * Effect represents potentially asynchronous operation that results in a set
  * of events. It is often comprised of multiple `Task` and represents either
  * chain of events or a concurrent set of events (stretched over time).
- * `Effect` campares to a `Stream` the same way as `Task` compares to `Promise`.
+ * `Effect` compares to a `Stream` the same way as `Task` compares to `Promise`.
  * It is not representation of an eventual result, but rather representation of
  * an operation which if execute will produce certain result. `Effect` can also
  * be compared to an `EventEmitter`, because very often their `Event` type
@@ -91,13 +96,13 @@ export type TaskState<
  * You may notice that `Effect`, is just a `Task` which never fails, nor has a
  * (meaningful) result. Instead it can produce events (send messages).
  */
-export interface Effect<Event> extends Task<void, never, Event> {}
+export interface Effect<Event extends {}> extends Task<void, never, Event> {}
 
 export type Status = "idle" | "active" | "finished"
 
-export type Group<T, X, M> = Main<T, X, M> | TaskGroup<T, X, M>
+export type Group<T, X, M extends {}> = Main<T, X, M> | TaskGroup<T, X, M>
 
-export interface TaskGroup<T, X, M> {
+export interface TaskGroup<T, X, M extends {}> {
   id: number
   parent: Group<T, X, M>
   driver: Controller<T, X, M>
@@ -106,14 +111,14 @@ export interface TaskGroup<T, X, M> {
   result?: Result<T, X>
 }
 
-export interface Main<T, X, M> {
+export interface Main<T, X, M extends {}> {
   id: 0
   parent?: null
   status: Status
   stack: Stack<T, X, M>
 }
 
-export interface Stack<T = unknown, X = unknown, M = unknown> {
+export interface Stack<T = unknown, X = unknown, M extends {} = {}> {
   active: Controller<T, X, M>[]
   idle: Set<Controller<T, X, M>>
 }
@@ -136,18 +141,18 @@ export interface Future<Success, Failure> extends PromiseLike<Success> {
 export interface Fork<
   Success extends unknown = unknown,
   Failure extends unknown = unknown,
-  Message extends unknown = never
+  Message extends {} = never
 > extends Controller<Success, Failure, Message>,
     Task<Fork<Success, Failure, Message>, never, never>,
     Future<Success, Failure> {
   readonly id: number
 
-  group: Fork<unknown, unknown, unknown>
+  group: Fork<unknown, unknown, {}>
 
   resume(): void
 
-  abort(reason: Failure): Task<null, never, never>
-  exit(value: Success): Task<null, never, never>
+  abort(reason: Failure): Task<Success, Failure, Message>
+  exit(value: Success): Task<Success, Failure, Message>
 
   join(): Task<Success, Failure, Message>
 }
@@ -181,7 +186,7 @@ export type Return<T> = {
 }
 
 export type Join<Tasks> = Tasks extends [
-  Controller<infer T, unknown, unknown>,
+  Workflow<infer T, unknown, any>,
   ...infer Rest
 ]
   ? [T, ...Join<Rest>]
@@ -189,4 +194,6 @@ export type Join<Tasks> = Tasks extends [
   ? []
   : never
 
-export interface Run<T, X, M> extends Task<T, X, M>, Controller<T, X, M> {}
+export interface Run<T, X, M extends {}>
+  extends Task<T, X, M>,
+    Controller<T, X, M> {}

@@ -978,6 +978,7 @@ describe("cleanup", () => {
     const { log, output } = createLog()
     function* hang() {
       try {
+        log("start hang")
         yield* Task.sleep(21)
       } finally {
         log("cleanup hang")
@@ -986,6 +987,7 @@ describe("cleanup", () => {
 
     function* work() {
       try {
+        log("start work")
         const fork = yield* Task.fork(hang())
         yield* fork.join()
       } finally {
@@ -996,7 +998,7 @@ describe("cleanup", () => {
     function* main() {
       const worker = yield* Task.fork(work())
       yield* Task.sleep()
-      yield* Task.exit(worker)
+      yield* worker.exit()
     }
 
     assert.deepEqual(await Task.fork(inspect(main())), {
@@ -1004,7 +1006,12 @@ describe("cleanup", () => {
       value: undefined,
       mail: [],
     })
-    assert.deepEqual(output, ["cleanup hang", "cleanup work"])
+    assert.deepEqual(output, [
+      "start work",
+      "start hang",
+      "cleanup hang",
+      "cleanup work",
+    ])
   })
 
   it("children can do tasks on exit", async () => {
@@ -1030,11 +1037,12 @@ describe("cleanup", () => {
 
     function* main() {
       const worker = yield* Task.fork(work())
-      yield* Task.sleep()
-      yield* Task.exit(worker)
+      yield* Task.sleep(20)
+      yield* worker.exit()
     }
 
-    assert.deepEqual(await Task.fork(inspect(main())), {
+    const result = await Task.fork(inspect(main()))
+    assert.deepEqual(result, {
       ok: true,
       value: undefined,
       mail: [],
@@ -1042,7 +1050,7 @@ describe("cleanup", () => {
     assert.deepEqual(output, ["cleanup hang", "hang out", "cleanup work"])
   })
 
-  it("children can do tasks on exit", async () => {
+  it("children can throw on exit but still cleanup", async () => {
     const { log, output } = createLog()
     const error = new Error("staying alive")
     function* hang() {
@@ -1065,12 +1073,11 @@ describe("cleanup", () => {
 
     function* main() {
       const worker = yield* Task.fork(work())
-      yield* Task.sleep()
-      yield* Task.exit(worker)
+      yield* Task.sleep(20)
+      yield* worker.exit()
     }
 
     const out = await Task.fork(inspect(main()))
-
     assert.deepEqual(out, {
       ok: false,
       error,
