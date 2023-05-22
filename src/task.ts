@@ -190,6 +190,17 @@ export type Join<Tasks> = Tasks extends [
   ? []
   : never
 
+export type GroupResult<Members> = Members extends [
+  Workflow<infer T, unknown, any>,
+  ...infer Rest
+]
+  ? [T, ...GroupResult<Rest>]
+  : Members extends [Controller<infer T, any, any>, ...infer Rest]
+  ? [T, ...GroupResult<Rest>]
+  : Members extends []
+  ? []
+  : never
+
 export interface Run<T, X, M extends {}>
   extends Task<T, X, M>,
     Controller<T, X, M> {}

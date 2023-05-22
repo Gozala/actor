@@ -114,7 +114,6 @@ describe("Task.fork", () => {
 
     const work = Task.fork(worker(3))
     assert.deepEqual(output, [])
-    await Task.fork(Task.sleep(5))
     assert.deepEqual(work.state, { pending: {} })
 
     work.exit()

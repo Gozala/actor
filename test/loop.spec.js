@@ -1,7 +1,7 @@
 import { Task, Effect } from "../src/lib.js"
 import { assert, createLog, inspect } from "./util.js"
 
-describe.skip("Task.loop", () => {
+describe("Task.loop", () => {
   it("can loop", async () => {
     const { log, output } = createLog()
     function* step({ n } = { n: 0 }) {
@@ -46,7 +46,7 @@ describe.skip("Task.loop", () => {
       log(`>> ${result}`)
     })
 
-    assert.deepEqual(await Task.fork(main), undefined)
+    assert.deepEqual(await Task.fork(main), {})
     assert.deepEqual(output, ["<< start", ">> 0"])
   })
 })

@@ -48,32 +48,33 @@ export const fork = (task, options = { name: "fork" }) => {
  * }
  * ```
  *
- * @template X
+ * @template {{}} X
  * @template {{}} M
- * @template {Task.Tuple<Task.Workflow<unknown, X, M>>|Iterable<Task.Workflow<unknown, X, M>>} Tasks
- * @param {Tasks} tasks
+ * @template {Task.Tuple<Task.Workflow<unknown, X, M>>} Tasks
+ * @param {Tasks|Iterable<Task.Workflow<unknown, X, M>>} tasks
  * @return {Task.Task<Task.Join<Tasks>, X, M>}
  */
 export function* join(tasks) {
   const group = current()
   const queue = []
-  const index = []
 
   for (const task of tasks) {
     task.group = group
     queue.push(task)
-    index.push(task)
   }
 
-  const output = yield* Join({
+  const result = yield* Join({
     queue,
-    index,
+    index: /** @type {Tasks} */ (tasks),
     idle: [],
-    result: new Array(queue.length),
-    state: OK,
+    result: { ok: new Array(queue.length) },
   })
 
-  return output
+  if (result.ok) {
+    return result.ok
+  } else {
+    throw result.error
+  }
 }
 
 /**
@@ -238,6 +239,100 @@ export function* wait(input) {
  */
 export const send = function* (message) {
   yield message
+}
+
+/**
+ * @template {{}} M
+ * @template {(message:M) => Task.Effect<M>} Next
+ * @param {Task.Effect<M>} init
+ * @param {Next} next
+ * @returns {Task.Task<{}, never, never>}
+ */
+export const loop = function* loop(init, next) {
+  /**
+   * We maintain two queues of tasks, one for active tasks and one for pending
+   * tasks. Active tasks are tasks that are currently running, while pending
+   * tasks are tasks that are suspended and waiting to be resumed.
+   */
+  const active = [init[Symbol.iterator]()]
+  const pending = []
+
+  while (active.length > 0 || pending.length > 0) {
+    // keep processing active tasks until there are no more left
+    while (active.length > 0) {
+      // we remove the first task from the queue and will attempt to advance it.
+      const top = active[0]
+      active.shift()
+
+      const state = top.next()
+      // If task is done we're done with it and can move on to the next one.
+      if (state.done) {
+        continue
+      }
+
+      switch (state.value) {
+        // If task requested suspension we move it into the pending queue.
+        case SUSPEND:
+          pending.push(top)
+          break
+        // if task yielded we simply push it back to the active queue.
+        case YIELD:
+          active.push(top)
+          break
+        default: {
+          // if task sent a message we pass it into `next` function to get the
+          // next task and push it into the active queue. We also push the
+          // current task back into the active queue to advance it further.
+          const task = next(/** @type {M} */ (state.value))
+          active.push(task[Symbol.iterator]())
+          active.push(top)
+        }
+      }
+    }
+
+    // If we got here we have no more active tasks, but we might have pending
+    // tasks that are waiting to be resumed. We move them back into the active
+    // queue and suspend until one of the suspended tasks resume after which
+    // we'll resume the loop.
+    if (pending.length > 0) {
+      active.push(...pending)
+      pending.length = 0
+      yield* suspend()
+    }
+  }
+
+  return UNIT
+}
+
+/**
+ * @template X
+ * @template {{}} M
+ * @template {Task.Controller<unknown, X, M>[]} Work
+ */
+class Group {
+  /**
+   * @param {Work} work
+   * @param {Work[number][]} [active]
+   * @param {Work[number][]} [pending]
+   */
+  constructor(work, active = [...work], pending = []) {
+    this.work = work
+    this.active = active
+    this.pending = pending
+    this.result = /** @type {Task.GroupResult<Work>} */ new Array(work.length)
+  }
+
+  *resume() {
+    const { work, active, pending } = this
+    while (active.length > 0 || pending.length > 0) {
+      while (active.length > 0) {
+        const top = active[0]
+        active.shift()
+
+        const state = top.next()
+      }
+    }
+  }
 }
 
 /**
@@ -602,18 +697,17 @@ class Channel {
 }
 
 /**
- * @template X
+ * @template {{}} X
  * @template {{}} M
  * @template {Task.Workflow<unknown, X, M>[]} Tasks
  * @param {object} state
- * @param {Task.Workflow<unknown, X, M>[]} state.index
+ * @param {Tasks} state.index
  * @param {Task.Workflow<unknown, X, M>[]} state.queue
  * @param {Task.Workflow<unknown, X, M>[]} state.idle
- * @param {unknown[]} state.result
- * @param {typeof OK|X} state.state
- * @return {Task.Task<Task.Join<Tasks>, X, M>}
+ * @param {Task.Result<unknown[], X>} state.result
+ * @return {Task.Task<Task.Result<Task.Join<Tasks>, X>, never, M>}
  */
-function* Join({ index, queue, idle, result, state }) {
+function* Join({ index, queue, idle, result }) {
   try {
     // we keep looping as long as there are idle or queued tasks.
     while (queue.length + idle.length > 0) {
@@ -621,21 +715,21 @@ function* Join({ index, queue, idle, result, state }) {
       // concurrently. If task suspends we add them to the idle list
       // otherwise we push it back to the queue.
       while (queue.length > 0) {
-        const task = queue[0]
+        const top = queue[0]
         queue.shift()
 
-        const next = task.next()
+        const next = top.next()
 
         if (next.done) {
-          if (state == OK) {
-            result[index.indexOf(task)] = next.value
+          if (result.ok) {
+            result.ok[index.indexOf(top)] = next.value
           }
         } else if (next.value === SUSPEND) {
-          idle.push(task)
+          idle.push(top)
         } else if (next.value === YIELD) {
-          queue.push(task)
+          queue.push(top)
         } else {
-          queue.push(task)
+          queue.push(top)
 
           yield next.value
         }
@@ -653,19 +747,18 @@ function* Join({ index, queue, idle, result, state }) {
       }
       // If we don't have idle tasks we're done. If we were joining OK state
       // we return the result, otherwise we throw.
-      else if (state === OK) {
-        return /** @type {Task.Join<Tasks>} */ (result)
-      } else {
-        throw state
+      else {
+        return /** @type {Task.Result<Task.Join<Tasks>, X>} */ (result)
       }
     }
-  } catch (reason) {
+  } catch (cause) {
+    const error = /** @type {X} */ (cause)
     // if we are already aborting just ignore otherwise we queue tasks to abort
     // all the existing tasks.
-    if (state === OK) {
-      state = /** @type {X}  */ (reason)
+    if (result.ok) {
+      result = { error }
       for (const work of [...queue.splice(0), ...idle.splice(0)]) {
-        work.abort(state)
+        work.abort(error)
         queue.push(work)
       }
     }
@@ -678,14 +771,10 @@ function* Join({ index, queue, idle, result, state }) {
     }
 
     if (queue.length > 0) {
-      yield* Join({ queue, index, idle, result, state })
+      return yield* Join({ queue, index, idle, result })
+    } else {
+      return /** @type {Task.Result<Task.Join<Tasks>, X>} */ (result)
     }
-  }
-
-  if (state === OK) {
-    return /** @type {Task.Join<Tasks>} */ (result)
-  } else {
-    throw state
   }
 }
 
@@ -700,5 +789,3 @@ function* Join({ index, queue, idle, result, state }) {
 const isAsync = node =>
   node != null &&
   typeof (/** @type {{then?:unknown}} */ (node).then) === "function"
-
-const OK = Symbol("OK")
