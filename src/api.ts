@@ -1,23 +1,19 @@
 export * from "./task.js"
-import { Task, Future, Controller, TaskState, Success } from "./task.js"
-
-export interface Work {
-  next(): TaskState
-}
+import { Task, Future, Controller, TaskState, Send, Success } from "./task.js"
 
 export interface Workflow<
   Success extends unknown = unknown,
   Failure extends unknown = unknown,
   Message extends {} = never
-> {
-  // extends Future<Success, Failure>
+> extends Future<Success, Failure> {
   readonly id: number
-  root: Workflow<{}, {}, {}>
+  root: Workflow<unknown, unknown, {}>
 
-  group: Workflow<{}, {}, {}>
+  group: Workflow<unknown, unknown, {}>
 
   state: Variant<{ ok: Success; error: Failure; pending: Unit }>
   next(): TaskState<Success, Message>
+  [Symbol.asyncIterator](): AsyncGenerator<Send<Message>, Success, void>
 
   // /**
   //  * Suspends underlying task, that is when task yields it
@@ -39,20 +35,6 @@ export interface Workflow<
    * group of the current task.
    */
   join(): Task<Success, Failure, Message>
-
-  /**
-   * Returns a new task that resumes this one in `finally` surrounding
-   * the last yield point. If there is no finally clause, or it has no return
-   * statement passed `value` will be returned by the task.
-   */
-  return(value: Success): Task<Success, Failure, Message>
-
-  /**
-   * Returns a new task that resumes this one in the `catch` surrounding
-   * the last yield point. If there is no `catch` block passed `cause` will be
-   * thrown by the task.
-   */
-  throw(cause: Failure): Task<Success, Failure, Message>
 }
 
 /**
@@ -109,3 +91,5 @@ export type Variant<U extends Record<string, unknown>> = {
     [K in Key]: U[Key]
   }
 }[keyof U]
+
+export type Tuple<T> = [T, ...T[]]

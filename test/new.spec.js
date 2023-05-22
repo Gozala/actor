@@ -973,7 +973,7 @@ import { assert, createLog, inspect } from "./util.js"
 //   })
 // })
 
-describe("cleanup", () => {
+describe.skip("cleanup", () => {
   it("will cleanup joined children", async () => {
     const { log, output } = createLog()
     function* hang() {

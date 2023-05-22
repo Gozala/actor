@@ -1,4 +1,4 @@
-import * as Task from "../src/next.js"
+import { Task } from "../src/lib.js"
 import { assert, inspect, createLog } from "./util.js"
 
 describe("concurrency", () => {
@@ -21,10 +21,10 @@ describe("concurrency", () => {
       yield* Task.sleep(8)
       const b = Task.fork(worker("b", 7, 7))
 
-      yield* Task.join(a, b)
+      yield* Task.join([a, b])
     }
 
-    const result = await Task.perform(inspect(main()))
+    const result = await Task.fork(inspect(main()))
     const { mail } = result
 
     assert.equal(result.ok, true)
@@ -71,7 +71,7 @@ describe("concurrency", () => {
       const b = Task.fork(work("B"))
 
       log("Join")
-      const merge = Task.join(a, b)
+      const merge = Task.join([a, b])
       yield* merge
 
       log("Nap")
@@ -80,7 +80,7 @@ describe("concurrency", () => {
       log("Exit")
     }
 
-    await Task.perform(main())
+    await Task.fork(main())
 
     assert.deepEqual(
       [...output],
@@ -109,10 +109,10 @@ describe("concurrency", () => {
       const worker = Task.fork(work())
       yield* Task.sleep(0)
 
-      yield* Task.join(worker)
+      yield* Task.join([worker])
     }
 
-    const result = await Task.perform(inspect(main()))
+    const result = await Task.fork(inspect(main()))
     assert.deepEqual(result, {
       ok: false,
       error: boom,
@@ -120,7 +120,7 @@ describe("concurrency", () => {
     })
   })
 
-  it("spawn can outlive parent", async () => {
+  it("fork can outlive parent", async () => {
     const { output, log } = createLog()
     const worker = function* () {
       log("start fork")
@@ -134,10 +134,10 @@ describe("concurrency", () => {
       log("exit main")
     }
 
-    await Task.perform(Task.fork(main()).join())
+    await Task.fork(Task.fork(main()).join())
     // assert.deepEqual(output, ["start main", "exit main", "start fork"])
 
-    await Task.perform(Task.sleep(20))
+    await Task.fork(Task.sleep(20))
 
     assert.deepEqual(output, [
       "start main",
@@ -163,14 +163,14 @@ describe("concurrency", () => {
       yield* worker.exit().join()
     }
 
-    assert.deepEqual(await Task.perform(inspect(main())), {
+    assert.deepEqual(await Task.fork(inspect(main())), {
       ok: false,
       error: boom,
       mail: [],
     })
   })
 
-  it("exception in errored fork propagates through exit", async () => {
+  it("exception in errored fork propagates through exit().join()", async () => {
     const boom = new Error("boom")
     function* work() {
       try {
@@ -186,7 +186,7 @@ describe("concurrency", () => {
       yield* worker.exit().join()
     }
 
-    assert.deepEqual(await Task.perform(inspect(main())), {
+    assert.deepEqual(await Task.fork(inspect(main())), {
       ok: false,
       error: boom,
       mail: [],
@@ -213,14 +213,14 @@ describe("concurrency", () => {
       }
     }
 
-    assert.deepEqual(await Task.perform(inspect(main())), {
+    assert.deepEqual(await Task.fork(inspect(main())), {
       ok: true,
       value: { worker: boom },
       mail: [],
     })
   })
 
-  it("error in forked thread does not affect spawner", async () => {
+  it("error in forked thread does not affect parent", async () => {
     const boom = new Error("boom")
 
     let threw = false
@@ -240,7 +240,7 @@ describe("concurrency", () => {
       return "done"
     }
 
-    assert.deepEqual(await Task.perform(inspect(main())), {
+    assert.deepEqual(await Task.fork(inspect(main())), {
       ok: true,
       value: "done",
       mail: [],
@@ -249,7 +249,7 @@ describe("concurrency", () => {
     assert.equal(threw, true)
   })
 
-  it("exiting parent task exits children", async () => {
+  it("exiting parent does not exits children", async () => {
     const boom = new Error("boom")
     let threw = false
     function* work() {
@@ -267,13 +267,13 @@ describe("concurrency", () => {
       return "done"
     }
 
-    assert.deepEqual(await Task.perform(inspect(main())), {
+    assert.deepEqual(await Task.fork(inspect(main())), {
       ok: true,
       value: "done",
       mail: [],
     })
 
-    await Task.perform(Task.sleep(20))
+    await Task.fork(Task.sleep(20))
 
     assert.equal(threw, true)
   })

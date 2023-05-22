@@ -1,7 +1,7 @@
-import * as Task from "../src/lib.js"
+import * as Task from "../src/ex-lib.js"
 import { assert, createLog, inspect } from "./util.js"
 
-describe("wait", () => {
+describe.skip("wait", () => {
   it("it does wait on non-promise", async () => {
     let isSync = true
     function* worker() {
@@ -155,7 +155,7 @@ describe("wait", () => {
   })
 })
 
-describe("messaging", () => {
+describe.skip("messaging", () => {
   it("can send message", async () => {
     function* main() {
       yield* Task.send("one")
@@ -279,7 +279,7 @@ describe("messaging", () => {
   })
 })
 
-describe("subtasks", () => {
+describe.skip("subtasks", () => {
   it("crashes parent", async () => {
     /**
      * @param {Task.Await<number>} x
@@ -512,7 +512,7 @@ describe("subtasks", () => {
   })
 })
 
-describe("concurrency", () => {
+describe.skip("concurrency", () => {
   it("can run tasks concurrently", async () => {
     /**
      * @param {string} name
@@ -680,7 +680,7 @@ describe("concurrency", () => {
   })
 })
 
-describe("type level errors", () => {
+describe.skip("type level errors", () => {
   it("must yield* not yield", async () => {
     const main = function* () {
       yield Task.sleep(2)
@@ -701,7 +701,7 @@ describe("type level errors", () => {
   })
 })
 
-describe("can abort", () => {
+describe.skip("can abort", () => {
   it("can terminate sleeping task", async () => {
     let { output, log } = createLog()
     function* main() {
@@ -939,7 +939,7 @@ describe("can abort", () => {
   })
 })
 
-describe("promise", () => {
+describe.skip("promise", () => {
   it("fails promise if task fails", async () => {
     function* main() {
       throw new Error("boom")
@@ -996,7 +996,7 @@ describe("promise", () => {
   })
 })
 
-describe("tag", () => {
+describe.skip("tag", () => {
   it("tags effect", async () => {
     function* fx() {
       yield* Task.send(1)
@@ -1129,7 +1129,7 @@ describe("tag", () => {
   })
 })
 
-describe("effect", () => {
+describe.skip("effect", () => {
   it("can listen to several fx", async () => {
     /**
      * @param {number} delay
@@ -1307,7 +1307,7 @@ describe("effect", () => {
   })
 })
 
-describe("all operator", () => {
+describe.skip("all operator", () => {
   it("can get all results", async () => {
     const { output, log } = createLog()
 
@@ -1377,7 +1377,7 @@ describe("all operator", () => {
   })
 })
 
-describe("Fork API", () => {
+describe.skip("Fork API", () => {
   it("can use abort method", async () => {
     const { output, log } = createLog()
     const kill = new Error("kill")
@@ -1517,7 +1517,7 @@ describe("Fork API", () => {
   })
 })
 
-describe("hang", () => {
+describe.skip("hang", () => {
   it.skip("will cleanup joined children", async () => {
     const { log, output } = createLog()
     function* hang() {

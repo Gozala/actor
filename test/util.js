@@ -22,10 +22,10 @@ export const createLog = () => {
  * @template T, X
  * @template {{}} M
  * @param {Task.Task<T, X, M>} task
- * @returns {Task.Task<{ok:true, value:T, mail:M[]}|{ok:false, error:X, mail:M[]}, never, M>}
+ * @returns {Task.Task<{ok:true, value:T, error?:never, mail:Task.Send<M>[]}|{ok:false, error:X, value?:never, mail:Task.Send<M>[]}, never, M>}
  */
 export const inspect = function* (task) {
-  /** @type {M[]} */
+  /** @type {Task.Send<M>[]} */
   const mail = []
   /** @type {{ok:T, error?:undefined}|{ok?:undefined, error:X}|null} */
   let result = null

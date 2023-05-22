@@ -1,9 +1,4 @@
-export * from "./lib.js"
-
 import { Variant, Workflow } from "./api.js"
-import type { Control } from "./lib.js"
-
-export type Instruction<T> = Message<T> | Control
 
 export type Await<T> = T | PromiseLike<T>
 
@@ -26,7 +21,7 @@ type CompileError<Reason extends string> = `🚨 ${Reason}`
 /**
  * Helper type to guard users against easy to make mistakes.
  */
-export type Message<T> = T extends Task<any, any, any>
+export type Send<T> = T extends Task<any, any, any>
   ? CompileError<`You must 'yield * fn()' to delegate task instead of 'yield fn()' which yields generator instead`>
   : T extends (...args: any) => Generator
   ? CompileError<`You must yield invoked generator as in 'yield * fn()' instead of yielding generator function`>
@@ -79,7 +74,7 @@ export type Command<Message> = Message | Suspend | Yield
 export type TaskState<
   Success extends unknown = unknown,
   Message extends {} = {}
-> = IteratorResult<Yield | Suspend | Message, Success>
+> = IteratorResult<Yield | Suspend | Send<Message>, Success>
 
 /**
  * Effect represents potentially asynchronous operation that results in a set

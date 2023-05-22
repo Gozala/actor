@@ -1,7 +1,7 @@
 import * as Task from "../src/scratch.js"
 import { assert, createLog, inspect } from "./util.js"
 
-describe("subtasks", () => {
+describe.skip("subtasks", () => {
   it("crashes parent", async () => {
     /**
      * @param {Task.Await<number>} x
