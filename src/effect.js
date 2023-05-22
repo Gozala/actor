@@ -22,22 +22,20 @@ export const none = () => NONE
  * })
  * ```
  *
- * @template {string} Tag
- * @template {{}} T
- * @param {{ [K in Tag]: Task.Effect<T> }} source
- * @returns {Task.Effect<Tagged<Tag, T>>}
+ * @template {Record<string, Task.Effect>} Source
+ * @param {Source} source
+ * @returns {Task.Effect<Task.Variant<{[Tag in keyof Source]: Source[Tag] extends Task.Effect<infer M> ? M : never}>>}
  */
 export const listen = function* (source) {
-  /** @type {Task.Workflow<*, never, Tagged<Tag, T>>[]} */
   const forks = []
   for (const entry of Object.entries(source)) {
-    const [name, effect] = /** @type {[Tag, Task.Effect<T>]} */ (entry)
+    const [name, effect] = entry
 
     const work = fork(Tag(name, effect))
     forks.push(work)
   }
 
-  yield* join(forks)
+  yield* join(/** @type {*} */ (forks))
 }
 
 /**
@@ -74,14 +72,14 @@ export const perform = function* (task) {
  * @template {{}} M
  * @param {Label} label
  * @param {Task.Task<T, X, M>} source
- * @returns {Task.Task<Tagged<Label, T>, X, Tagged<Label, M>>}
+ * @returns {Task.Task<Record<Label, T>, X, Record<Label, M>>}
  */
 function* Tag(label, source) {
   const iterator = source[Symbol.iterator]()
   while (true) {
     const next = iterator.next()
     if (next.done) {
-      return /** @type {Tagged<Label, T>} */ ({ [label]: next.value })
+      return /** @type {Record<Label, T>} */ ({ [label]: next.value })
     } else {
       switch (next.value) {
         case SUSPEND:
@@ -89,7 +87,7 @@ function* Tag(label, source) {
           yield next.value
           break
         default:
-          yield /** @type {Task.Send<Tagged<Label, M>>} */ ({
+          yield /** @type {Task.Send<Record<Label, M>>} */ ({
             [label]: /** @type {M} */ (next.value),
           })
       }

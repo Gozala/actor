@@ -91,7 +91,8 @@ export type TaskState<
  * You may notice that `Effect`, is just a `Task` which never fails, nor has a
  * (meaningful) result. Instead it can produce events (send messages).
  */
-export interface Effect<Event extends {}> extends Task<void, never, Event> {}
+export interface Effect<Event extends {} = {}>
+  extends Task<void, never, Event> {}
 
 export type Status = "idle" | "active" | "finished"
 

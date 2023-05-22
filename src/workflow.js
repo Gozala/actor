@@ -1,6 +1,9 @@
 import * as Task from "./api.js"
 export * from "./api.js"
-import { SUSPEND, YIELD, TICK, UNIT, CONTINUE, Yield } from "./constant.js"
+import { SUSPEND, YIELD, UNIT, CONTINUE, Yield } from "./constant.js"
+import { resume, current } from "./scheduler.js"
+
+export { current }
 
 /**
  * Starts executing given task in concurrent {@link Task.Workflow}. Can be
@@ -26,37 +29,9 @@ import { SUSPEND, YIELD, TICK, UNIT, CONTINUE, Yield } from "./constant.js"
 export const fork = (task, options = { name: "fork" }) => {
   // Create a workflow containing this task and add it to the queue.
   const work = new Workflow(task[Symbol.iterator](), options)
-  QUEUE.push(work)
-  // If the main loop is idle, call occurred from outside of any task, in which
-  // case we wake the main loop after a tick so that we could return workflow
-  // before execution starts.
-  // ⚠️ It is very important to wait a tick here
-  // otherwise behavior will be different depending on whether there are some
-  // active tasks or not. It also allows the caller to `abort` the workflow
-  // before it starts executing.
-  if (MAIN.idle) {
-    TICK.then(wake)
-  }
+  work.resume()
 
   return work
-}
-
-/**
- * Gets a currently running {@link Task.Workflow}. Useful when task needs to
- * suspend execution until some outside event occurs, in which case
- * `workflow.resume()` can be used to resume execution (see `suspend` code
- * example for more details)
- *
- * ⚠️ Note that it is unsafe to call this function outside of the task context
- * and it will throw an error if no task is running.
- *
- * @returns {Task.Workflow<unknown, unknown, {}>}
- */
-export const current = () => {
-  if (MAIN.idle) {
-    throw new RangeError(`Task.current() must be called from the running task`)
-  }
-  return QUEUE[0]
 }
 
 /**
@@ -243,7 +218,7 @@ export function* wait(input) {
       throw output
     }
   } else {
-    enqueue(task)
+    resume(task)
     yield
     return input
   }
@@ -427,7 +402,7 @@ class Workflow {
   }
 
   resume() {
-    enqueue(this)
+    resume(this)
 
     return this
   }
@@ -568,6 +543,7 @@ class Workflow {
     return "Workflow"
   }
 }
+let ID = 0
 
 /**
  * @template {{}} T
@@ -620,53 +596,8 @@ class Channel {
 
   async *[Symbol.asyncIterator]() {
     while (true) {
-      yield await Task.fork(this.take())
+      yield await fork(this.take())
     }
-  }
-}
-
-class Main {
-  constructor() {
-    this.id = ID
-    this.idle = true
-  }
-}
-
-let ID = 0
-/** @type {Task.Workflow<*, *, *>[]} */
-const QUEUE = []
-const MAIN = new Main()
-
-/**
- * @param {Task.Workflow<*, *, *>} work
- */
-const enqueue = work => {
-  QUEUE.push(work)
-  wake()
-}
-
-const wake = () => {
-  if (MAIN.idle) {
-    MAIN.idle = false
-    while (QUEUE.length > 0) {
-      const work = QUEUE[0].root
-
-      try {
-        const state = work.next()
-        // unless workflow is complete or has been suspended, we put it back
-        // into the queue.
-        if (!state.done && state.value !== SUSPEND) {
-          QUEUE.push(work)
-        }
-      } catch (_) {
-        // Top level task may crash and throw an error, but given this is a main
-        // group we do not want to interrupt other unrelated tasks, which is why
-        // we discard the error and the task that caused it.
-      }
-
-      QUEUE.shift()
-    }
-    MAIN.idle = true
   }
 }
 

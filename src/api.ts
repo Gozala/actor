@@ -48,6 +48,13 @@ export type Result<T extends {} = {}, X extends {} = {}> = Variant<{
   error: X
 }>
 
+export type Tagged<Tag extends string, T> = { type: Tag } & { [K in Tag]: T }
+/**
+ * @template {string} Tag
+ * @template T
+ * @typedef {{type: Tag} & {[K in Tag]: T}} Tagged
+ */
+
 /**
  * @see {@link https://en.wikipedia.org/wiki/Unit_type|Unit type - Wikipedia}
  */
