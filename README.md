@@ -329,7 +329,6 @@ listen({
 
 Returns empty `Effect`, that is produces no messages. Kind of like `[]` or `""`, which is useful when you need to interact with an API that tases `Effect`, but in your case you produce `none`.
 
-## API
 
 [actor model]: https://en.wikipedia.org/wiki/Actor_model
 [elm task]: https://package.elm-lang.org/packages/elm/core/latest/Task
