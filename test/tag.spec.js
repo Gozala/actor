@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as Task from "../src/lib.js"
 import { assert, inspect, createLog } from "./util.js"
 
