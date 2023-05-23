@@ -15,7 +15,7 @@
     "test:web": "playwright-test test/*.spec.js --cov && nyc report",
     "test:node": "c8 --check-coverage --branches 100 --functions 100 --lines 100 mocha test/*.spec.js",
     "coverage": "c8 --reporter=html mocha test/test-*.js && npm_config_yes=true npx st -d coverage -p 8080",
-    "typecheck": "tsc --build",
+    "check": "tsc --build",
     "prepare": "tsc --build"
   },
   "type": "module",
@@ -34,7 +34,8 @@
   "c8": {
     "exclude": [
       "test/**",
-      "dist/**"
+      "dist/**",
+      "src/ex-lib.js"
     ],
     "reports-dir": ".coverage"
   },
@@ -46,14 +47,15 @@
     "report-dir": ".coverage"
   },
   "devDependencies": {
-    "typescript": "^4.5.5",
-    "@types/mocha": "^9.1.0",
-    "@types/chai": "^4.3.0",
-    "mocha": "^9.2.0",
-    "chai": "^4.3.6",
+    "@types/chai": "^4.3.5",
+    "@types/mocha": "^10.0.1",
+    "@types/setimmediate": "^1.0.2",
+    "c8": "^7.13.0",
+    "chai": "^4.3.7",
+    "mocha": "^10.2.0",
     "nyc": "^15.1.0",
-    "playwright-test": "^7.2.2",
-    "c8": "^7.11.0"
+    "playwright-test": "^9.1.0",
+    "typescript": "^5.0.4"
   },
   "repository": {
     "type": "git",

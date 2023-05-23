@@ -1,5 +1,5 @@
 import { assert } from "chai"
-import * as Task from "../src/lib.js"
+import * as Task from "../src/task.js"
 
 export { assert }
 
@@ -19,36 +19,49 @@ export const createLog = () => {
 }
 
 /**
- * @template T, X, M
+ * @template T, X
+ * @template {{}} M
  * @param {Task.Task<T, X, M>} task
+ * @returns {Task.Task<{ok:true, value:T, error?:never, mail:Task.Send<M>[]}|{ok:false, error:X, value?:never, mail:Task.Send<M>[]}, never, M>}
  */
-export const inspect = task => Task.fork(inspector(task))
-
-/**
- * @template T, X, M
- * @param {Task.Task<T, X, M>} task
- * @returns {Task.Task<{ ok: boolean, value?: T, error?: X, mail: M[] }, never>}
- */
-export const inspector = function* (task) {
-  /** @type {M[]} */
+export const inspect = function* (task) {
+  /** @type {Task.Send<M>[]} */
   const mail = []
-  let input
+  /** @type {{ok:T, error?:undefined}|{ok?:undefined, error:X}|null} */
+  let result = null
+
   const controller = task[Symbol.iterator]()
   try {
     while (true) {
-      const step = controller.next(input)
+      const step = controller.next()
       if (step.done) {
-        return { ok: true, value: step.value, mail }
+        result = { ok: step.value }
+        break
       } else {
-        const instruction = step.value
-        if (Task.isInstruction(instruction)) {
-          input = yield instruction
-        } else {
-          mail.push(/** @type {M} */ (instruction))
+        if (step.value != undefined) {
+          mail.push(step.value)
         }
+        yield step.value
       }
     }
-  } catch (error) {
-    return { ok: false, error: /** @type {X} */ (error), mail }
+  } catch (cause) {
+    result = { error: /** @type {X} */ (cause) }
+  } finally {
+    const output =
+      result == null
+        ? {
+            ok: /** @type {const} */ (false),
+            error: /** @type {X} */ (new Error("Task was interrupted")),
+            mail,
+          }
+        : "ok" in result
+        ? {
+            ok: /** @type {const} */ (true),
+            value: /** @type {T} */ (result.ok),
+            mail,
+          }
+        : { ok: /** @type {const} */ (false), error: result.error, mail }
+
+    return output
   }
 }

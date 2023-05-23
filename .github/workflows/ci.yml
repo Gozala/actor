@@ -21,19 +21,20 @@ jobs:
     strategy:
       matrix:
         node-version:
-          - 16
+          - 18
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 7
       - name: Setup node ${{ matrix.node-version }}
         uses: actions/setup-node@v2
         with:
           node-version: ${{ matrix.node-version }}
-
+          cache: "pnpm"
       - name: Install dependencies
-        uses: bahmutov/npm-install@v1
-
+        run: pnpm install
       - name: Typecheck
         uses: gozala/typescript-error-reporter-action@v1.0.8
         with:
@@ -45,24 +46,24 @@ jobs:
     strategy:
       matrix:
         node-version:
-          - 16
+          - 18
         os:
           - ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-
-      - name: Setup Node
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 7
+      - name: Setup node ${{ matrix.node-version }}
         uses: actions/setup-node@v2
         with:
           node-version: ${{ matrix.node-version }}
-
-      - name: Install dependencies
-        uses: bahmutov/npm-install@v1
-
+          cache: "pnpm"
+      - run: pnpm install
       - name: Test
-        run: yarn test:node
+        run: pnpm run test:node
   test-web:
     name: Test Web
     runs-on: ubuntu-latest
@@ -70,19 +71,21 @@ jobs:
     strategy:
       matrix:
         node-version:
-          - 16
+          - 18
 
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-
-      - name: Setup Node
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 7
+      - name: Setup node ${{ matrix.node-version }}
         uses: actions/setup-node@v2
         with:
-          node-version: 16
-
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm"
       - name: Install dependencies
-        uses: bahmutov/npm-install@v1
-
+        run: pnpm install
       - name: Test
-        run: yarn test:web
+        run: pnpm run test:web
