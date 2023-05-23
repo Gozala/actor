@@ -233,4 +233,23 @@ describe("Task.join", () => {
 
     assert.deepEqual(result, 0)
   })
+
+  it("can join non-active fork", async () => {
+    function* work() {
+      yield
+      yield* Task.send("hi")
+    }
+
+    const worker = Task.fork(work())
+
+    function* main() {
+      yield* worker.join()
+    }
+
+    assert.deepEqual(await Task.fork(inspect(main())), {
+      mail: ["hi"],
+      ok: true,
+      value: undefined,
+    })
+  })
 })
