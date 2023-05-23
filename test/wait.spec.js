@@ -1,17 +1,21 @@
-import * as Task from "../src/scratch.js"
+import { Task } from "../src/lib.js"
+import { wake } from "../src/scheduler.js"
 import { assert, createLog, inspect } from "./util.js"
 
 describe("wait", () => {
-  it("it does wait on non-promise", async () => {
-    let isSync = true
+  it("does wait on non-promise", async () => {
+    let complete = false
     function* worker() {
       const message = yield* Task.wait(5)
-      assert.equal(isSync, true, "expect to be sync")
       assert.equal(message, 5)
+      complete = true
     }
 
-    const result = Task.fork(inspect(worker())).then()
-    isSync = false
+    const result = Task.fork(inspect(worker()))
+    // we need to force wake scheduler to see the effect of the sync
+    wake()
+    assert.equal(complete, true, "expect to be complete")
+
     assert.deepEqual(await result, {
       ok: true,
       value: undefined,
@@ -19,7 +23,36 @@ describe("wait", () => {
     })
   })
 
-  it("does await on promise", async () => {
+  it("interleaves with other tasks", async () => {
+    const { log, output } = createLog()
+    function* wait() {
+      log("start wait")
+      const message = yield* Task.wait(5)
+      log("end wait")
+      assert.equal(message, 5)
+    }
+
+    function* work() {
+      log("start work")
+      yield* Task.sleep(1)
+      log("end work")
+    }
+
+    const waited = Task.fork(wait())
+    const worked = Task.fork(work())
+
+    assert.deepEqual(await waited, undefined)
+    assert.deepEqual(await worked, undefined)
+
+    assert.deepEqual(output, [
+      "start wait",
+      "start work",
+      "end wait",
+      "end work",
+    ])
+  })
+
+  it("does wait on promise", async () => {
     let isSync = true
     function* main() {
       const message = yield* Task.wait(Promise.resolve(5))

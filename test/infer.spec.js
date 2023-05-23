@@ -1,5 +1,4 @@
 import * as Task from "../src/lib.js"
-import { assert, inspect, createLog } from "./util.js"
 
 describe("inference", () => {
   it("must yield* not yield", async () => {

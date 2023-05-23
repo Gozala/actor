@@ -197,6 +197,8 @@ export type GroupResult<Members> = Members extends [
   ? [T, ...GroupResult<Rest>]
   : Members extends [Controller<infer T, any, any>, ...infer Rest]
   ? [T, ...GroupResult<Rest>]
+  : Members extends [Task<infer T, any, any>, ...infer Rest]
+  ? [T, ...GroupResult<Rest>]
   : Members extends []
   ? []
   : never

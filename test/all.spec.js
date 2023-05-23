@@ -1,7 +1,7 @@
 import { Task } from "../src/lib.js"
 import { assert, inspect, createLog } from "./util.js"
 
-describe.skip("Task.all", () => {
+describe("Task.all", () => {
   it("can get all results", async () => {
     const { output, log } = createLog()
 
@@ -55,7 +55,7 @@ describe.skip("Task.all", () => {
       return result
     }
 
-    const result = await inspect(main())
+    const result = await Task.fork(inspect(main()))
     assert.deepEqual(result, {
       ok: false,
       error: "c",
@@ -67,6 +67,14 @@ describe.skip("Task.all", () => {
   })
 
   it("can make all of none", async () => {
-    assert.deepEqual(await Task.fork(Task.all([])), [])
+    assert.deepEqual(
+      await Task.fork(
+        Task.all(
+          // @ts-expect-error - expect one task
+          []
+        )
+      ),
+      []
+    )
   })
 })

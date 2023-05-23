@@ -1,4 +1,4 @@
-import * as Task from "../src/scratch.js"
+import { Task } from "../src/lib.js"
 import { assert, createLog, inspect } from "./util.js"
 
 describe("messaging", () => {

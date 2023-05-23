@@ -59,7 +59,7 @@ describe("work.abort()", () => {
     assert.deepEqual(output, ["begin main", "sleep worker"])
   })
 
-  it("calls catch catch on abort", async () => {
+  it("calls catch on abort", async () => {
     const reason = new Error("abort")
     const { log, output } = createLog()
 

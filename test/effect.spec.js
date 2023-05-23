@@ -1,7 +1,7 @@
 import { Effect, Task } from "../src/lib.js"
 import { assert, inspect, createLog } from "./util.js"
 
-describe("Task.listen", () => {
+describe("Effect", () => {
   it("can listen to several fx", async () => {
     /**
      * @param {number} delay
@@ -132,6 +132,16 @@ describe("Task.listen", () => {
       ok: true,
       value: undefined,
       mail: ["bar", "baz", "foo"],
+    })
+  })
+
+  it("nofx", async () => {
+    const fx = Effect.none()
+
+    assert.deepEqual(await Task.fork(inspect(fx)), {
+      ok: true,
+      value: undefined,
+      mail: [],
     })
   })
 })

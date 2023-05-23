@@ -49,6 +49,67 @@ describe("concurrency", () => {
     assert.notDeepEqual([...mail].sort(), mail, "messages are not ordered")
   })
 
+  it("immediate join precedes forked task", async () => {
+    const { log, output } = createLog()
+    /**
+     * @param {string} name
+     * @param {number} duration
+     * @param {number} count
+     */
+    function* worker(name, duration, count) {
+      log(`start ${name}`)
+      let n = 0
+      while (n++ < count) {
+        yield* Task.sleep(duration)
+        yield* Task.send(`${name}#${n}`)
+      }
+      log(`end ${name}`)
+    }
+
+    function* main() {
+      log("fork a")
+      const a = Task.fork(worker("a", 5, 6))
+      log("fork b")
+      const b = Task.fork(worker("b", 7, 7))
+      log("join a and b")
+      yield* Task.join([a, b])
+      log("done")
+    }
+
+    const result = await Task.fork(inspect(main()))
+    const { mail } = result
+    assert.deepEqual(
+      [...mail].sort(),
+      [
+        "a#1",
+        "a#2",
+        "a#3",
+        "a#4",
+        "a#5",
+        "a#6",
+        "b#1",
+        "b#2",
+        "b#3",
+        "b#4",
+        "b#5",
+        "b#6",
+        "b#7",
+      ],
+      "has all the items"
+    )
+    assert.notDeepEqual([...mail].sort(), mail, "messages are not ordered")
+    assert.deepEqual(output, [
+      "fork a",
+      "fork b",
+      "join a and b",
+      "start a",
+      "start b",
+      "end a",
+      "end b",
+      "done",
+    ])
+  })
+
   it("can fork and join", async () => {
     const { output, log } = createLog()
     /**

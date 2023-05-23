@@ -1,9 +1,16 @@
 import * as Task from "./api.js"
 export * from "./api.js"
-import { SUSPEND, YIELD, UNIT, CONTINUE, Yield } from "./constant.js"
-import { resume, current } from "./scheduler.js"
+import { SUSPEND, YIELD, UNIT, CONTINUE, Yield, OK } from "./constant.js"
+import { resume, current, suspend } from "./scheduler.js"
+import * as Channel from "./channel.js"
+export { current, suspend }
 
-export { current }
+/**
+ * @template {Task.Task<unknown, unknown, {}>} Task
+ * @param {() => Task} work
+ * @returns {Task.Spawn<Task>}
+ */
+export const spawn = work => /** @type {*} */ (fork(work()))
 
 /**
  * Starts executing given task in concurrent {@link Task.Workflow}. Can be
@@ -20,19 +27,14 @@ export { current }
  * through `for await` loop.
  *
  * @template {unknown} T
- * @template {unknown} X
+ * @template {{}} X
  * @template {{}} M
  * @param {Task.Task<T, X, M>} task
  * @param {Task.ForkOptions} [options]
  * @returns {Task.Workflow<T, X, M>}
  */
-export const fork = (task, options = { name: "fork" }) => {
-  // Create a workflow containing this task and add it to the queue.
-  const work = new Workflow(task[Symbol.iterator](), options)
-  work.resume()
-
-  return work
-}
+export const fork = (task, options = { name: "fork" }) =>
+  Workflow.new(task, options).resume()
 
 /**
  * Waits for the given {@link Task.Workflow}s to to finish and returns
@@ -50,73 +52,56 @@ export const fork = (task, options = { name: "fork" }) => {
  *
  * @template {{}} X
  * @template {{}} M
- * @template {Task.Tuple<Task.Workflow<unknown, X, M>>} Tasks
- * @param {Tasks|Iterable<Task.Workflow<unknown, X, M>>} tasks
- * @return {Task.Task<Task.Join<Tasks>, X, M>}
+ * @template {[]|Task.Tuple<Task.Workflow<unknown, X, M>>} Work
+ * @param {Work|Iterable<Task.Workflow<unknown, X, M>>} work
+ * @return {Task.Task<Task.GroupResult<Work>, X, M>}
  */
-export function* join(tasks) {
+export function* join(work) {
   const group = current()
-  const queue = []
+  const active = []
 
-  for (const task of tasks) {
-    task.group = group
-    queue.push(task)
+  for (const fork of work) {
+    fork.group = group
+    active.push(fork)
   }
 
-  const result = yield* Join({
-    queue,
-    index: /** @type {Tasks} */ (tasks),
-    idle: [],
-    result: { ok: new Array(queue.length) },
-  })
+  yield* run(/** @type {Work} */ (active))
 
-  if (result.ok) {
-    return result.ok
-  } else {
-    throw result.error
+  const result = []
+  for (const fork of work) {
+    result.push(fork.state.ok)
   }
+
+  return /** @type {Task.GroupResult<Work>} */ (result)
 }
 
 /**
- * Suspends the current task (task that invoked it), which can then be
- * resumed from another task or an outside event (e.g. `setTimeout` callback)
- * by calling the `workflow.resume()` on the task's workflow.
+ * Takes iterable of tasks and runs them concurrently, returning array of
+ * results in an order of tasks (not the order of completion). If any of the
+ * tasks fail all the rest are aborted and error is throw into calling task.
  *
- * Calling this in almost all cases is preceded by a call to {@link current}
- * that returns a reference to the current task's {@link Task.Workflow} which
- * has a `resume` method that can be used to resume the execution.
+ * > This is basically equivalent of `Promise.all` except cancelation logic
+ * because tasks unlike promises can be cancelled.
  *
- * Note: While this task may fail if it's aborted while it is suspended, which
- * is why it is recommended to always wrap it in a try .. catch/finally so that
- * you can handle the failure or at least perform a cleanup in case execution
- * is aborted.
- *
- * @example
- * ```js
- * import { current, suspend, resume } from "actor"
- * function * sleep(duration) {
- *    // get a reference to this task so we can resume it.
- *    const work = current()
- *    // resume this task when timeout fires
- *    const id = setTimeout(() => work.resume(), duration)
- *    try {
- *      // suspend this task nothing below this line will run until task is
- *      // resumed.
- *      yield * suspend()
- *    } finally {
- *      // if task is aborted finally block will still run which given you
- *      // chance to cleanup.
- *      clearTimeout(id)
- *    }
- * }
- * ```
- *
- * @returns {Task.Task<{}, never>}
+ * @template {{}} X
+ * @template {Task.Tuple<Task.Task<unknown, X>>} Tasks
+ * @param {Tasks} tasks
+ * @returns {Task.Task<Task.GroupResult<Tasks>, X>}
  */
-export const suspend = function* Suspend() {
-  yield SUSPEND
+export const all = function* (tasks) {
+  const work = []
+  for (const task of tasks) {
+    work.push(Workflow.new(task, { name: "all" }))
+  }
 
-  return UNIT
+  yield* run(work)
+
+  const result = []
+  for (const top of work) {
+    result.push(top.state.ok)
+  }
+
+  return /** @type {Task.GroupResult<Tasks>} */ (result)
 }
 
 /**
@@ -159,6 +144,28 @@ export function* sleep(duration = 0) {
     // the timeout to avoid waking up the task after it has been aborted.
     clearTimeout(id)
   }
+}
+
+/**
+ * Creates a task that succeeds with given value.
+ *
+ * @template T
+ * @param {T} value
+ * @returns {Task.Task<T, never, never>}
+ */
+export function* succeed(value) {
+  return value
+}
+
+/**
+ * Creates a task that fails with given error.
+ *
+ * @template X
+ * @param {X} error
+ * @returns {Task.Task<never, X, never>}
+ */
+export function* fail(error) {
+  throw error
 }
 
 /**
@@ -213,6 +220,7 @@ export function* wait(input) {
     while (ok == null) {
       yield* suspend()
     }
+
     if (ok) {
       return /** @type {T} */ (output)
     } else {
@@ -242,11 +250,12 @@ export const send = function* (message) {
 }
 
 /**
+ * @template {{}} X
  * @template {{}} M
- * @template {(message:M) => Task.Effect<M>} Next
- * @param {Task.Effect<M>} init
+ * @template {(message:M) => Task.Task<unknown, X, M>} Next
+ * @param {Task.Task<unknown, X, M>} init
  * @param {Next} next
- * @returns {Task.Task<{}, never, never>}
+ * @returns {Task.Task<Task.Unit, X, M>}
  */
 export const loop = function* loop(init, next) {
   /**
@@ -254,113 +263,165 @@ export const loop = function* loop(init, next) {
    * tasks. Active tasks are tasks that are currently running, while pending
    * tasks are tasks that are suspended and waiting to be resumed.
    */
-  const active = [init[Symbol.iterator]()]
-  const pending = []
+  return yield* run([Workflow.new(init)], next)
+}
 
-  while (active.length > 0 || pending.length > 0) {
-    // keep processing active tasks until there are no more left
-    while (active.length > 0) {
-      // we remove the first task from the queue and will attempt to advance it.
-      const top = active[0]
-      active.shift()
+/**
+ * @template {{}} X
+ * @template {{}} M
+ * @template {(message:M) => Task.Task<unknown, X, M>} Next
+ * @param {Task.Workflow<unknown, X, M>[]} work
+ * @param {Next} [spawn]
+ * @returns {Task.Task<Task.Unit, X, M>}
+ */
+function* run(work, spawn) {
+  /**
+   * We maintain two queues of work, one for active workflows and one for
+   * parked workflows.
+   */
+  const active = [...work]
+  const parked = []
+  /**
+   * We keep track of thrown exceptions that we have caught, which we will use
+   * in the `finally` block to decide whether to exit the tasks or let them
+   * finish cleanup.
+   * @type {X[]}
+   */
+  const errors = []
 
-      const state = top.next()
-      // If task is done we're done with it and can move on to the next one.
-      if (state.done) {
-        continue
+  // The outer "main" loop keeps running until we exhaust all of the work. Unlike
+  // inner "work" loop it never breaks, even on exceptions, because those are
+  // caught by the try / catch blocks inside. Inner "work" loop on the other
+  // hand breaks on exceptions, when that happens we abort all remaining
+  // workflows and let the "main" loop take care of driving them to completion,
+  // which allows them to recover from errors with `try / catch` or do a cleanup
+  // using `finally`.
+  main: while (active.length > 0) {
+    try {
+      // The inner loop keeps running until there are no more active tasks after
+      // which we suspend the whole workflow until some task is resumed at which
+      // point this loop will resume until no more tasks are left or exception
+      // is thrown.
+      work: while (active.length > 0) {
+        // The "active" loop iterates over all the active tasks and attempts to
+        // advance them. Unlike the outer "work" loop it does not suspend and
+        // is done when after active tasks have either completed or got
+        // suspended.
+        active: while (active.length > 0) {
+          // Remove the top task from the active stack and attempt to advance it.
+          const top = active[0]
+          active.shift()
+
+          const state = top.next()
+
+          // If task is complete there is nothing to do so we move on to the
+          // next one.
+          if (state.done) {
+            continue
+          }
+          // Otherwise we check the state of the task and act accordingly.
+          else {
+            switch (state.value) {
+              // If task requested suspension we move it into the parked queue.
+              case SUSPEND:
+                parked.push(top)
+                break
+              // If task yields we simply push it back to the active queue so
+              // we can advance it further after all other active tasks.
+              case YIELD:
+                active.push(top)
+                break
+              // Otherwise task yielded a message, which we propagate to the
+              // out and push task back to the active queue.
+              default: {
+                // If we have a `spawn` handler we call it to create concurrent
+                // task which we then push into the active queue.
+                if (spawn) {
+                  const task = spawn(/** @type {M} */ (state.value))
+                  active.push(Workflow.new(task))
+                }
+                active.push(top)
+                yield state.value
+              }
+            }
+          }
+        }
+
+        // If we got here "active" loop advanced all the tasks it could, yet we
+        // may have some suspended tasks left. In that case we suspend the whole
+        // workflow until one of the suspended tasks resume after which we'll
+        // resume the loop. If we have no suspended tasks we break out of the
+        // "work" and "main" loops and return the result.
+        if (parked.length > 0) {
+          active.push(...parked)
+          parked.length = 0
+          yield* suspend()
+        }
       }
-
-      switch (state.value) {
-        // If task requested suspension we move it into the pending queue.
-        case SUSPEND:
-          pending.push(top)
-          break
-        // if task yielded we simply push it back to the active queue.
-        case YIELD:
-          active.push(top)
-          break
-        default: {
-          // if task sent a message we pass it into `next` function to get the
-          // next task and push it into the active queue. We also push the
-          // current task back into the active queue to advance it further.
-          const task = next(/** @type {M} */ (state.value))
-          active.push(task[Symbol.iterator]())
+    } catch (cause) {
+      const error = /** @type {X} */ (cause)
+      // If we have not seen this error before we add it to the list of errors
+      // and abort all the tasks. If we have seen this error we ignore it
+      // because it is just one of the aborted tasks that did not handle it.
+      if (!errors.includes(error)) {
+        errors.push(error)
+        // Signal all the tasks to abort and move them into the active queue to
+        // be driven to completion by the "main" loop.
+        for (const top of [...active.splice(0), ...parked.splice(0)]) {
+          top.abort(error)
           active.push(top)
         }
       }
-    }
+    } finally {
+      // If we have not caught any errors yet we either have exhausted all the
+      // work or this task had been exited while it was suspended. If later
+      // we signal all tasks exit to exit and let the "main" loop drive them to
+      // completion. If we have caught any errors we do not do anything as the
+      // catch block above will have already aborted all the tasks and we just
+      // let the "main" loop drive them to completion.
+      if (errors.length === 0) {
+        // if we still have tasks then `return` was called or exception was thrown
+        // in which case we just go ahead and exit all the tasks.
+        for (const top of [...active.splice(0), ...parked.splice(0)]) {
+          top.exit(/** @type {*} */ (undefined))
+          active.push(top)
+        }
 
-    // If we got here we have no more active tasks, but we might have pending
-    // tasks that are waiting to be resumed. We move them back into the active
-    // queue and suspend until one of the suspended tasks resume after which
-    // we'll resume the loop.
-    if (pending.length > 0) {
-      active.push(...pending)
-      pending.length = 0
-      yield* suspend()
-    }
-  }
-
-  return UNIT
-}
-
-/**
- * @template X
- * @template {{}} M
- * @template {Task.Controller<unknown, X, M>[]} Work
- */
-class Group {
-  /**
-   * @param {Work} work
-   * @param {Work[number][]} [active]
-   * @param {Work[number][]} [pending]
-   */
-  constructor(work, active = [...work], pending = []) {
-    this.work = work
-    this.active = active
-    this.pending = pending
-    this.result = /** @type {Task.GroupResult<Work>} */ new Array(work.length)
-  }
-
-  *resume() {
-    const { work, active, pending } = this
-    while (active.length > 0 || pending.length > 0) {
-      while (active.length > 0) {
-        const top = active[0]
-        active.shift()
-
-        const state = top.next()
+        // If exit was called we will not be able to go back to the "main" loop
+        // which is why we recurse here instead.
+        yield* run(active, spawn)
       }
     }
   }
-}
 
-/**
- * @template {unknown} T
- * @template {unknown} X
- * @template {{}} M
- * @implements {Task.Task<T, X, M>}
- */
-class JoinWorkflow {
-  /**
-   *
-   * @param {Workflow<T, X, M>} workflow
-   */
-  constructor(workflow) {
-    this.workflow = workflow
-  }
-  [Symbol.iterator]() {
-    return this.workflow
+  // If we have not caught any errors we return unit as the result, otherwise
+  // we return the first error we have caught as that is the one that caused
+  // the whole workflow to abort.
+  if (errors.length) {
+    throw errors[0]
+  } else {
+    return UNIT
   }
 }
 
 /**
  * @template {unknown} T
- * @template {unknown} X
+ * @template {{}} X
  * @template {{}} M
  * @implements {Task.Workflow<T, X, M>}
  */
 class Workflow {
+  /**
+   * @template {unknown} T
+   * @template {{}} X
+   * @template {{}} M
+   * @param {Task.Task<T, X, M>} task
+   * @param {Task.ForkOptions} [options]
+   * @returns {Task.Workflow<T, X, M>}
+   */
+  static new(task, options) {
+    return new this(task[Symbol.iterator](), options)
+  }
   /**
    * @param {Task.Controller<T, X, M>} top
    * @param {Task.ForkOptions} [options]
@@ -464,38 +525,6 @@ class Workflow {
     }
   }
 
-  /**
-   * @template {unknown} T
-   * @template {unknown} X
-   * @template {{}} M
-   * @param {Workflow<T, X, M>} self
-   * @param {T} value
-   */
-  static succeed(self, value) {
-    self.status = "ok"
-    self.ok = value
-    if (self.onsuccess) {
-      self.onsuccess(value)
-    }
-  }
-
-  /**
-   * @param {X} error
-   * @returns {Task.TaskState<T, M>}
-   */
-  throw(error) {
-    this.inbox.push({ throw: error })
-    return Yield
-  }
-  /**
-   * @param {T} ok
-   * @returns {Task.TaskState<T, M>}
-   */
-  return(ok) {
-    this.inbox.push({ return: ok })
-    return Yield
-  }
-
   resume() {
     resume(this)
 
@@ -508,7 +537,11 @@ class Workflow {
   *join() {
     this.group = current()
     if (this.group !== this) {
-      return yield* new JoinWorkflow(this)
+      const [result] = yield* join([
+        /** @type {Task.Workflow<T, X, M>} */
+        (this),
+      ])
+      return result
     } else {
       yield
       return this.ok
@@ -526,8 +559,8 @@ class Workflow {
         throw this.error
     }
 
-    /** @type {Channel<Task.Send<M>>} */
-    const channel = new Channel()
+    /** @type {Task.Channel<Task.Send<M>>} */
+    const channel = Channel.open()
     this.channel = channel
     while (true) {
       const message = await fork(channel.take())
@@ -542,25 +575,8 @@ class Workflow {
         yield message
       }
     }
-
-    // /** @type {M[]} */
-    // this.outbox = []
-
-    // // TODO: This is no good because if generator is not consumed
-    // // it will miss messages
-    // let block = Workflow.receive(this)
-    // while (this.status === "pending") {
-    //   const step = await block
-    //   block = Workflow.receive(this)
-    //   if (step.done) {
-    //     break
-    //   } else if (step.value) {
-    //     yield step.value
-    //   }
-    // }
-
-    // return this.ok
   }
+
   /**
    * @param {X} error
    */
@@ -613,7 +629,7 @@ class Workflow {
    * @param {((value:T) => U | PromiseLike<U>)|undefined|null} [succeed]
    * @param {((error:X) => E|PromiseLike<E>)|undefined|null} [fail]
    * @returns {Promise<U|E>}
-   */
+  //  */
   then(succeed, fail) {
     return this.promise.then(succeed, fail)
   }
@@ -639,144 +655,6 @@ class Workflow {
   }
 }
 let ID = 0
-
-/**
- * @template {{}} T
- */
-class Channel {
-  /**
-   * @param {T[]} buffer
-   */
-  constructor(buffer = []) {
-    /** @type {"open"|"closed"} */
-    this.status = "open"
-    this.buffer = buffer
-    /** @type {Task.Workflow<*, *, *>[]} */
-    this.readQueue = []
-  }
-  /**
-   * @param {T} message
-   */
-  put(message) {
-    if (this.status === "open") {
-      this.buffer.push(message)
-      const work = this.readQueue.shift()
-      if (work) {
-        work.resume()
-      }
-    } else {
-      throw new Error("Channel is closed")
-    }
-  }
-
-  *take() {
-    const { buffer, readQueue } = this
-    while (this.status === "open" && buffer.length === 0) {
-      readQueue.push(current())
-      yield* suspend()
-    }
-
-    return buffer.shift()
-  }
-
-  close() {
-    this.status = "closed"
-    if (this.buffer.length === 0) {
-      for (const work of this.readQueue) {
-        work.resume()
-      }
-      this.readQueue.length = 0
-    }
-  }
-
-  async *[Symbol.asyncIterator]() {
-    while (true) {
-      yield await fork(this.take())
-    }
-  }
-}
-
-/**
- * @template {{}} X
- * @template {{}} M
- * @template {Task.Workflow<unknown, X, M>[]} Tasks
- * @param {object} state
- * @param {Tasks} state.index
- * @param {Task.Workflow<unknown, X, M>[]} state.queue
- * @param {Task.Workflow<unknown, X, M>[]} state.idle
- * @param {Task.Result<unknown[], X>} state.result
- * @return {Task.Task<Task.Result<Task.Join<Tasks>, X>, never, M>}
- */
-function* Join({ index, queue, idle, result }) {
-  try {
-    // we keep looping as long as there are idle or queued tasks.
-    while (queue.length + idle.length > 0) {
-      // as long as we have tasks in the queue we step through them
-      // concurrently. If task suspends we add them to the idle list
-      // otherwise we push it back to the queue.
-      while (queue.length > 0) {
-        const top = queue[0]
-        queue.shift()
-
-        const next = top.next()
-
-        if (next.done) {
-          if (result.ok) {
-            result.ok[index.indexOf(top)] = next.value
-          }
-        } else if (next.value === SUSPEND) {
-          idle.push(top)
-        } else if (next.value === YIELD) {
-          queue.push(top)
-        } else {
-          queue.push(top)
-
-          yield next.value
-        }
-      }
-
-      // If we got here we no longer have tasks in the queue, which means
-      // we either have nothing else to do or all tasks had been suspended.
-
-      // When we have idle tasks that means we have suspended tasks, in that
-      // case we enqueue all of them and suspend this task.
-      if (idle.length > 0) {
-        queue.push(...idle)
-        idle.length = 0
-        yield* suspend()
-      }
-      // If we don't have idle tasks we're done. If we were joining OK state
-      // we return the result, otherwise we throw.
-      else {
-        return /** @type {Task.Result<Task.Join<Tasks>, X>} */ (result)
-      }
-    }
-  } catch (cause) {
-    const error = /** @type {X} */ (cause)
-    // if we are already aborting just ignore otherwise we queue tasks to abort
-    // all the existing tasks.
-    if (result.ok) {
-      result = { error }
-      for (const work of [...queue.splice(0), ...idle.splice(0)]) {
-        work.abort(error)
-        queue.push(work)
-      }
-    }
-  } finally {
-    // if we still have tasks then `return` was called or exception was thrown
-    // in which case we just go ahead and close things out
-    for (const work of [...queue.splice(0), ...idle.splice(0)]) {
-      work.exit(undefined)
-      queue.push(work)
-    }
-
-    if (queue.length > 0) {
-      return yield* Join({ queue, index, idle, result })
-    } else {
-      return /** @type {Task.Result<Task.Join<Tasks>, X>} */ (result)
-    }
-  }
-}
 
 /**
  * Checks if value value is a promise (or it's lookalike).

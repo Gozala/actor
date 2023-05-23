@@ -1,5 +1,13 @@
 export * from "./task.js"
-import { Task, Future, Controller, TaskState, Send, Success } from "./task.js"
+import {
+  Task,
+  Future,
+  Controller,
+  TaskState,
+  Send,
+  Success,
+  GroupResult,
+} from "./task.js"
 
 export interface Workflow<
   Success extends unknown = unknown,
@@ -35,6 +43,20 @@ export interface Workflow<
    * group of the current task.
    */
   join(): Task<Success, Failure, Message>
+}
+
+export type Spawn<T extends Task<unknown, unknown, {}>> = T extends Task<
+  infer S,
+  infer F,
+  infer M
+>
+  ? Workflow<S, F, M>
+  : never
+
+export interface Channel<T extends {} = {}> {
+  put(message: T): void
+  close(): void
+  take(): Task<T | undefined, Error>
 }
 
 /**

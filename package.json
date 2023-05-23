@@ -34,7 +34,8 @@
   "c8": {
     "exclude": [
       "test/**",
-      "dist/**"
+      "dist/**",
+      "src/ex-lib.js"
     ],
     "reports-dir": ".coverage"
   },

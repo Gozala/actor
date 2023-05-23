@@ -63,6 +63,21 @@ describe("Task.fork", () => {
     assert.deepEqual(invoked, true)
   })
 
+  it("can await after completion", async () => {
+    const work = Task.fork(Task.succeed(0))
+    await Task.fork(Task.sleep(1))
+    assert.deepEqual(await work, 0)
+    assert.deepEqual(await work, 0)
+  })
+
+  it("can await after workflow failed", async () => {
+    const work = Task.fork(Task.fail("boom"))
+    await Task.fork(Task.sleep(1))
+    assert.deepEqual(await work.catch(error => ({ catch: error })), {
+      catch: "boom",
+    })
+  })
+
   it("has toStringTag", async () => {
     const fork = Task.fork(Task.sleep(2))
     assert.deepEqual(String(fork), "[object Workflow]")
@@ -83,6 +98,60 @@ describe("Task.fork", () => {
     }
     assert.deepEqual(messages, ["hello", "world"])
     assert.deepEqual(await work, { ok: {} })
+  })
+
+  it("async iteration errors on workflow failure", async () => {
+    function* main() {
+      yield* Task.send("hello")
+      yield* Task.sleep(5)
+      yield* Task.send("world")
+      throw "boom"
+    }
+
+    const work = Task.fork(main())
+    const messages = []
+    let error = undefined
+
+    try {
+      for await (const message of work) {
+        messages.push(message)
+      }
+    } catch (cause) {
+      error = cause
+    }
+
+    assert.deepEqual(messages, ["hello", "world"])
+    assert.deepEqual(error, "boom")
+    assert.deepEqual(work.state, { error: "boom" })
+  })
+
+  it("can async iterate finished workflow", async () => {
+    const work = Task.fork(Task.send("hello"))
+    await Task.fork(Task.sleep(1))
+
+    const messages = []
+    for await (const message of work) {
+      messages.push(message)
+    }
+    assert.deepEqual(messages, [])
+  })
+
+  it("throws when async iterating errored workflow", async () => {
+    const work = Task.fork(Task.fail("boom"))
+    await Task.fork(Task.sleep(1))
+
+    let error = undefined
+
+    try {
+      const messages = []
+      for await (const message of work) {
+        messages.push(message)
+      }
+    } catch (cause) {
+      error = cause
+    }
+
+    assert.deepEqual(error, "boom")
   })
 
   it("can fork a task", async () => {
@@ -123,6 +192,31 @@ describe("Task.fork", () => {
     assert.deepEqual(work.state, { ok: undefined })
   })
 
+  it("can abort forked task", async () => {
+    const { output, log } = createLog()
+    const boom = new Error("boom")
+    function* worker(count = 0) {
+      log("> start worker")
+      let n = 0
+      while (n < count) {
+        yield* Task.sleep(2)
+        log(`>> ${n}`)
+        yield* Task.send(`msg ${n++}`)
+      }
+      log("< end worker")
+    }
+
+    const work = Task.fork(worker(3))
+    assert.deepEqual(output, [])
+    assert.deepEqual(work.state, { pending: {} })
+
+    work.abort(boom)
+    await Task.fork(Task.sleep(20))
+    assert.equal(output.includes("< end worker"), false)
+
+    assert.deepEqual(work.state, { error: boom })
+  })
+
   it("can fork and then join", async () => {
     /**
      * @param {string} name
@@ -154,5 +248,44 @@ describe("Task.fork", () => {
       ["a#2", "a#3", "a#4", "a#5", "a#6"],
       "has all but first message from a"
     )
+  })
+
+  it("can resume a workflow", async () => {
+    const { output, log } = createLog()
+    function* work() {
+      log("suspend work")
+      yield* Task.suspend()
+      log("resume work")
+    }
+
+    function* main() {
+      const worker = Task.fork(work())
+      yield* Task.sleep(2)
+      worker.resume()
+      log("exit")
+    }
+
+    await Task.fork(main())
+    assert.deepEqual(output, ["suspend work", "exit", "resume work"])
+  })
+
+  it("can join outside workflow", async () => {
+    function* work() {
+      yield* Task.send("hi")
+      yield* Task.sleep(2)
+      yield* Task.send("bye")
+    }
+
+    const worker = Task.fork(work())
+
+    function* main() {
+      yield* worker.join()
+    }
+
+    assert.deepEqual(await Task.fork(inspect(main())), {
+      mail: ["bye"],
+      ok: true,
+      value: undefined,
+    })
   })
 })

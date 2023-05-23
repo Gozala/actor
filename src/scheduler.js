@@ -1,5 +1,5 @@
 import * as Task from "./api.js"
-import { SUSPEND } from "./constant.js"
+import { SUSPEND, UNIT } from "./constant.js"
 
 /** @type {Task.Workflow<*, *, *>[]} */
 const QUEUE = []
@@ -25,6 +25,48 @@ export const current = () => {
 }
 
 /**
+ * Suspends the current task (task that invoked it), which can then be
+ * resumed from another task or an outside event (e.g. `setTimeout` callback)
+ * by calling the `workflow.resume()` on the task's workflow.
+ *
+ * Calling this in almost all cases is preceded by a call to {@link current}
+ * that returns a reference to the current task's {@link Task.Workflow} which
+ * has a `resume` method that can be used to resume the execution.
+ *
+ * Note: While this task may fail if it's aborted while it is suspended, which
+ * is why it is recommended to always wrap it in a try .. catch/finally so that
+ * you can handle the failure or at least perform a cleanup in case execution
+ * is aborted.
+ *
+ * @example
+ * ```js
+ * import { current, suspend, resume } from "actor"
+ * function * sleep(duration) {
+ *    // get a reference to this task so we can resume it.
+ *    const work = current()
+ *    // resume this task when timeout fires
+ *    const id = setTimeout(() => work.resume(), duration)
+ *    try {
+ *      // suspend this task nothing below this line will run until task is
+ *      // resumed.
+ *      yield * suspend()
+ *    } finally {
+ *      // if task is aborted finally block will still run which given you
+ *      // chance to cleanup.
+ *      clearTimeout(id)
+ *    }
+ * }
+ * ```
+ *
+ * @returns {Task.Task<{}, never>}
+ */
+export const suspend = function* Suspend() {
+  yield SUSPEND
+
+  return UNIT
+}
+
+/**
  * @param {Task.Workflow<*, *, *>} work
  */
 export const resume = work => {
@@ -42,7 +84,7 @@ export const resume = work => {
   }
 }
 
-const wake = () => {
+export const wake = () => {
   if (idle) {
     idle = false
     while (QUEUE.length > 0) {
@@ -68,4 +110,5 @@ const wake = () => {
 }
 
 const setImmediate =
+  /* c8 ignore next */
   globalThis.setImmediate || Promise.prototype.finally.bind(Promise.resolve())
